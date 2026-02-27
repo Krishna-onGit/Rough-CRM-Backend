@@ -1,0 +1,7 @@
+node_modules
+.env
+dist
+.DS_Store
+*.txt
+test_projects*.js
+tests.js

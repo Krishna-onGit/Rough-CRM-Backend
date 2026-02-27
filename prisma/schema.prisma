@@ -1,0 +1,1175 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── ENUMS ───────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  admin
+  sales_manager
+  sales_executive
+  finance
+  operations
+}
+
+enum OrgPlan {
+  standard
+  premium
+  enterprise
+}
+
+// ─── ORGANIZATIONS ────────────────────────────────────────────────────────────
+
+model Organization {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  authOrgId   String?  @map("auth_org_id")
+  plan        OrgPlan  @default(standard)
+  settings    Json     @default("{}")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  users       User[]
+
+  @@map("organizations")
+}
+
+// ─── USERS ────────────────────────────────────────────────────────────────────
+
+model User {
+  id             String       @id @default(uuid())
+  organizationId String       @map("organization_id")
+  authUserId     String?      @unique @map("auth_user_id")
+  fullName       String       @map("full_name")
+  email          String
+  mobile         String?
+  role           UserRole     @default(sales_executive)
+  passwordHash   String       @map("password_hash")
+  isActive       Boolean      @default(true) @map("is_active")
+  lastLoginAt    DateTime?    @map("last_login_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@index([authUserId])
+  @@map("users")
+}
+
+// ─── PROJECT ENUMS ─────────────────────────────────────────────────────────
+
+enum ProjectType {
+  Residential
+  Commercial
+  Mixed
+}
+
+enum ProjectStatus {
+  active
+  pre_launch
+  completed
+}
+
+// ─── UNIT ENUMS ─────────────────────────────────────────────────────────────
+
+enum UnitConfig {
+  BHK_1
+  BHK_2
+  BHK_3
+  BHK_4
+  Penthouse
+}
+
+enum UnitFacing {
+  N
+  S
+  E
+  W
+  NE
+  NW
+  SE
+  SW
+}
+
+enum ViewType {
+  Sea
+  Garden
+  Pool
+  Road
+  City
+}
+
+enum ParkingType {
+  Covered
+  Open
+  Stack
+  None
+}
+
+enum UnitStatus {
+  available
+  blocked
+  token_received
+  booked
+  agreement_done
+  registered
+  possession_handed
+  cancelled
+}
+
+// ─── SALES PERSON ENUMS ─────────────────────────────────────────────────────
+
+enum Designation {
+  VP_Sales
+  Manager
+  Executive
+  Trainee
+}
+
+// ─── LEAD ENUMS ─────────────────────────────────────────────────────────────
+
+enum LeadSource {
+  whatsapp
+  website
+  referral
+  walk_in
+}
+
+enum LeadStatus {
+  new
+  contacted
+  site_visit_scheduled
+  site_visit_done
+  interested
+  negotiation
+  won
+  lost
+  junk
+}
+
+// ─── SITE VISIT ENUMS ───────────────────────────────────────────────────────
+
+enum VisitType {
+  first_visit
+  revisit
+  family_visit
+  loan_agent_visit
+}
+
+enum VisitFeedback {
+  interested
+  thinking
+  not_interested
+  price_concern
+  location_concern
+}
+
+// ─── TASK ENUMS ─────────────────────────────────────────────────────────────
+
+enum TaskType {
+  call
+  whatsapp
+  email
+  meeting
+  site_visit
+}
+
+enum Priority {
+  high
+  medium
+  low
+}
+
+enum TaskStatus {
+  pending
+  completed
+  missed
+  rescheduled
+}
+
+// ─── BOOKING / PAYMENT ENUMS ────────────────────────────────────────────────
+
+enum BookingStatus {
+  booked
+  agreement_done
+  registered
+  possession_handed
+  cancelled
+}
+
+enum PaymentMode {
+  cheque
+  neft
+  rtgs
+  upi
+  dd
+  cash
+}
+
+enum CommissionStatus {
+  pending
+  sale_completed
+  approved
+  partially_paid
+  paid
+  cancelled
+}
+
+enum PaymentStatus {
+  cleared
+  bounced
+  under_process
+  refund_pending
+  refunded
+}
+
+enum DemandLetterStatus {
+  pending
+  partially_paid
+  paid
+  overdue
+}
+
+enum ScheduleStatus {
+  upcoming
+  due
+  paid
+  overdue
+}
+
+// ─── POST SALES ENUMS ───────────────────────────────────────────────────────
+
+enum RefundStatus {
+  pending
+  approved
+  processed
+  paid
+}
+
+enum TransferStatus {
+  pending_approval
+  approved
+  executed
+  rejected
+}
+
+enum PossessionStatus {
+  pending
+  in_progress
+  completed
+}
+
+enum SnagCategory {
+  plumbing
+  electrical
+  civil
+  painting
+}
+
+enum SnagStatus {
+  open
+  in_progress
+  resolved
+}
+
+enum ComplaintCategory {
+  payment
+  construction
+  documentation
+  general
+}
+
+enum ComplaintStatus {
+  open
+  in_progress
+  resolved
+  closed
+  escalated
+}
+
+// ─── CUSTOMER / DOCUMENT ENUMS ──────────────────────────────────────────────
+
+enum DocumentCategory {
+  pan_card
+  aadhaar
+  photo
+  address_proof
+  income_proof
+  bank_statement
+  agreement
+  registration
+  noc
+  allotment_letter
+  possession_letter
+  other
+}
+
+enum DocumentStatus {
+  uploaded
+  verified
+  rejected
+}
+
+enum Channel {
+  call
+  email
+  whatsapp
+  sms
+  in_person
+}
+
+enum Direction {
+  inbound
+  outbound
+}
+
+enum LoanStatus {
+  applied
+  sanctioned
+  disbursing
+  fully_disbursed
+  rejected
+}
+
+// ─── APPROVAL / AUDIT ENUMS ─────────────────────────────────────────────────
+
+enum ApprovalRequestType {
+  cancellation
+  refund
+  transfer
+  discount
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+}
+
+enum AuditAction {
+  create
+  update
+  delete
+  status_change
+  approve
+  reject
+}
+
+// ─── PROJECTS ────────────────────────────────────────────────────────────────
+
+model Project {
+  id              String        @id @default(uuid())
+  organizationId  String        @map("organization_id")
+  projectCode     String        @map("project_code")
+  name            String
+  city            String
+  location        String?
+  projectType     ProjectType   @default(Residential) @map("project_type")
+  status          ProjectStatus @default(active)
+  baseRate        BigInt        @default(0) @map("base_rate")
+  completionPct   Decimal       @default(0) @db.Decimal(5, 2) @map("completion_pct")
+  reraNumber      String?       @map("rera_number")
+  settings        Json          @default("{}")
+  isActive        Boolean       @default(true) @map("is_active")
+  createdBy       String?       @map("created_by")
+  updatedBy       String?       @map("updated_by")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  towers          Tower[]
+  units           Unit[]
+
+  @@unique([organizationId, projectCode])
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, city])
+  @@map("projects")
+}
+
+// ─── TOWERS ──────────────────────────────────────────────────────────────────
+
+model Tower {
+  id              String    @id @default(uuid())
+  organizationId  String    @map("organization_id")
+  projectId       String    @map("project_id")
+  name            String
+  floors          Int
+  unitsPerFloor   Int       @map("units_per_floor")
+  totalUnits      Int       @map("total_units")
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  project         Project   @relation(fields: [projectId], references: [id])
+  units           Unit[]
+
+  @@unique([organizationId, projectId, name])
+  @@index([organizationId, projectId])
+  @@map("towers")
+}
+
+// ─── UNITS ───────────────────────────────────────────────────────────────────
+
+model Unit {
+  id                  String      @id @default(uuid())
+  organizationId      String      @map("organization_id")
+  projectId           String      @map("project_id")
+  towerId             String      @map("tower_id")
+  unitNumber          String      @map("unit_number")
+  unitCode            String      @map("unit_code")
+
+  // Configuration
+  floor               Int
+  config              UnitConfig
+  facing              UnitFacing?
+  viewType            ViewType?   @map("view_type")
+  parking             ParkingType @default(None)
+
+  // Area (stored as sqft x 100 for precision)
+  carpetArea          BigInt      @default(0) @map("carpet_area")
+  builtUpArea         BigInt      @default(0) @map("built_up_area")
+  superBuiltUpArea    BigInt      @default(0) @map("super_built_up_area")
+
+  // Pricing (all in paise)
+  baseRate            BigInt      @default(0) @map("base_rate")
+  basePrice           BigInt      @default(0) @map("base_price")
+  floorRise           BigInt      @default(0) @map("floor_rise")
+  plc                 BigInt      @default(0)
+  amenityCharge       BigInt      @default(0) @map("amenity_charge")
+  agreementValue      BigInt      @default(0) @map("agreement_value")
+  gstAmount           BigInt      @default(0) @map("gst_amount")
+  stampDuty           BigInt      @default(0) @map("stamp_duty")
+  registration        BigInt      @default(0)
+  totalPrice          BigInt      @default(0) @map("total_price")
+
+  // Lifecycle status
+  status              UnitStatus  @default(available)
+
+  // Block info (populated when status = blocked)
+  blockedBy           String?     @map("blocked_by")
+  blockedAt           DateTime?   @map("blocked_at")
+  blockExpiresAt      DateTime?   @map("block_expires_at")
+  blockAgentId        String?     @map("block_agent_id")
+
+  // Sale info (populated after booking)
+  salesPersonId       String?     @map("sales_person_id")
+  agentId             String?     @map("agent_id")
+  customerId          String?     @map("customer_id")
+  bookingId           String?     @map("booking_id")
+  saleDate            DateTime?   @map("sale_date")
+  finalSaleValue      BigInt?     @map("final_sale_value")
+  discountAmount      BigInt?     @map("discount_amount")
+  discountApprovedBy  String?     @map("discount_approved_by")
+
+  // Tracking
+  isActive            Boolean     @default(true) @map("is_active")
+  createdBy           String?     @map("created_by")
+  updatedBy           String?     @map("updated_by")
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  project             Project     @relation(fields: [projectId], references: [id])
+  tower               Tower       @relation(fields: [towerId], references: [id])
+
+  @@unique([organizationId, projectId, unitNumber])
+  @@index([organizationId, projectId])
+  @@index([organizationId, towerId])
+  @@index([organizationId, status])
+  @@index([organizationId, config])
+  @@index([organizationId, customerId])
+  @@index([organizationId, salesPersonId])
+  @@map("units")
+}
+
+// ─── SALES PERSONS ───────────────────────────────────────────────────────────
+
+model SalesPerson {
+  id              String      @id @default(uuid())
+  organizationId  String      @map("organization_id")
+  userId          String?     @map("user_id")
+  spCode          String      @map("sp_code")
+  fullName        String      @map("full_name")
+  mobile          String
+  email           String?
+  team            String?
+  designation     Designation @default(Executive)
+  reportingTo     String?     @map("reporting_to")
+  monthlyTarget   BigInt      @default(0) @map("monthly_target")
+  isActive        Boolean     @default(true) @map("is_active")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  @@unique([organizationId, spCode])
+  @@unique([organizationId, mobile])
+  @@index([organizationId])
+  @@index([organizationId, team])
+  @@index([organizationId, isActive])
+  @@map("sales_persons")
+}
+
+// ─── AGENTS / BROKERS ────────────────────────────────────────────────────────
+
+model Agent {
+  id                String    @id @default(uuid())
+  organizationId    String    @map("organization_id")
+  agentCode         String    @map("agent_code")
+  firmName          String?   @map("firm_name")
+  contactPerson     String    @map("contact_person")
+  mobile            String
+  email             String?
+  reraNumber        String    @map("rera_number")
+  pan               String?
+  gstNumber         String?   @map("gst_number")
+  commissionPct     Decimal   @default(0) @db.Decimal(5, 2) @map("commission_pct")
+  rating            Decimal   @default(0) @db.Decimal(2, 1)
+  totalCommission   BigInt    @default(0) @map("total_commission")
+  pendingCommission BigInt    @default(0) @map("pending_commission")
+  isActive          Boolean   @default(true) @map("is_active")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, agentCode])
+  @@unique([organizationId, reraNumber])
+  @@index([organizationId])
+  @@index([organizationId, isActive])
+  @@map("agents")
+}
+
+// ─── CUSTOMERS ───────────────────────────────────────────────────────────────
+
+model Customer {
+  id                  String    @id @default(uuid())
+  organizationId      String    @map("organization_id")
+  customerCode        String    @map("customer_code")
+
+  // Personal
+  fullName            String    @map("full_name")
+  fatherSpouse        String?   @map("father_spouse")
+  dateOfBirth         DateTime? @map("date_of_birth")
+  panNumber           String?   @map("pan_number")
+  aadhaarNumber       String?   @map("aadhaar_number")
+  mobilePrimary       String    @map("mobile_primary")
+  mobileAlternate     String?   @map("mobile_alternate")
+  email               String?
+  currentAddress      String?   @map("current_address")
+
+  // Financial
+  occupation          String?
+  companyName         String?   @map("company_name")
+  annualIncome        BigInt?   @map("annual_income")
+  paymentMode         String?   @map("payment_mode")
+  preferredBank       String?   @map("preferred_bank")
+  loanAmount          BigInt?   @map("loan_amount")
+
+  // Co-applicant
+  coApplicantName     String?   @map("co_applicant_name")
+  coApplicantPan      String?   @map("co_applicant_pan")
+  coApplicantRel      String?   @map("co_applicant_rel")
+
+  // KYC
+  kycDocuments        Json      @default("[]") @map("kyc_documents")
+  kycVerified         Boolean   @default(false) @map("kyc_verified")
+
+  // Tracking
+  isActive            Boolean   @default(true) @map("is_active")
+  createdBy           String?   @map("created_by")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, customerCode])
+  @@unique([organizationId, panNumber])
+  @@index([organizationId])
+  @@map("customers")
+}
+
+// ─── LEADS ───────────────────────────────────────────────────────────────────
+
+model Lead {
+  id                  String      @id @default(uuid())
+  organizationId      String      @map("organization_id")
+  leadCode            String      @map("lead_code")
+  fullName            String      @map("full_name")
+  mobile              String
+  email               String?
+  source              LeadSource  @default(walk_in)
+  status              LeadStatus  @default(new)
+  score               Int         @default(0)
+  interestedProject   String?     @map("interested_project")
+  interestedConfig    UnitConfig? @map("interested_config")
+  budgetMin           BigInt?     @map("budget_min")
+  budgetMax           BigInt?     @map("budget_max")
+  assignedTo          String?     @map("assigned_to")
+  assignedAt          DateTime?   @map("assigned_at")
+  convertedBookingId  String?     @map("converted_booking_id")
+  remarks             String?
+  lostReason          String?     @map("lost_reason")
+  isActive            Boolean     @default(true) @map("is_active")
+  createdBy           String?     @map("created_by")
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  siteVisits          SiteVisit[]
+  followUpTasks       FollowUpTask[]
+
+  @@unique([organizationId, leadCode])
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, assignedTo])
+  @@index([organizationId, source])
+  @@map("leads")
+}
+
+// ─── SITE VISITS ─────────────────────────────────────────────────────────────
+
+model SiteVisit {
+  id              String         @id @default(uuid())
+  organizationId  String         @map("organization_id")
+  leadId          String         @map("lead_id")
+  projectId       String         @map("project_id")
+  salesPersonId   String?        @map("sales_person_id")
+  visitDate       DateTime       @map("visit_date")
+  visitType       VisitType      @default(first_visit) @map("visit_type")
+  visitorCount    Int            @default(1) @map("visitor_count")
+  checkInAt       DateTime?      @map("check_in_at")
+  checkOutAt      DateTime?      @map("check_out_at")
+  feedback        VisitFeedback? 
+  remarks         String?
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  lead            Lead           @relation(fields: [leadId], references: [id])
+
+  @@index([organizationId])
+  @@index([organizationId, leadId])
+  @@index([organizationId, visitDate])
+  @@map("site_visits")
+}
+
+// ─── FOLLOW UP TASKS ─────────────────────────────────────────────────────────
+
+model FollowUpTask {
+  id              String      @id @default(uuid())
+  organizationId  String      @map("organization_id")
+  leadId          String      @map("lead_id")
+  assignedTo      String?     @map("assigned_to")
+  taskType        TaskType    @default(call) @map("task_type")
+  priority        Priority    @default(medium)
+  status          TaskStatus  @default(pending)
+  scheduledAt     DateTime    @map("scheduled_at")
+  completedAt     DateTime?   @map("completed_at")
+  outcome         String?
+  remarks         String?
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  lead            Lead        @relation(fields: [leadId], references: [id])
+
+  @@index([organizationId])
+  @@index([organizationId, assignedTo, status])
+  @@index([organizationId, scheduledAt])
+  @@map("follow_up_tasks")
+}
+
+// ─── BOOKINGS ────────────────────────────────────────────────────────────────
+
+model Booking {
+  id              String        @id @default(uuid())
+  organizationId  String        @map("organization_id")
+  bookingCode     String        @map("booking_code")
+  unitId          String        @map("unit_id")
+  projectId       String        @map("project_id")
+  customerId      String        @map("customer_id")
+  salesPersonId   String        @map("sales_person_id")
+  agentId         String?       @map("agent_id")
+  agreementValue  BigInt        @default(0) @map("agreement_value")
+  finalValue      BigInt        @default(0) @map("final_value")
+  discountAmount  BigInt        @default(0) @map("discount_amount")
+  tokenAmount     BigInt        @default(0) @map("token_amount")
+  paymentMode     PaymentMode   @default(cheque) @map("payment_mode")
+  status          BookingStatus @default(booked)
+  bookingDate     DateTime      @map("booking_date")
+  agreementDate   DateTime?     @map("agreement_date")
+  registrationDate DateTime?    @map("registration_date")
+  sourceLeadId    String?       @map("source_lead_id")
+  remarks         String?
+  createdBy       String?       @map("created_by")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  payments          Payment[]
+  commissions       Commission[]
+  demandLetters     DemandLetter[]
+  paymentSchedules  PaymentSchedule[]
+  cancellations     CancellationRecord[]
+  transfers         TransferRecord[]
+  possessions       PossessionRecord[]
+  loans             LoanRecord[]
+  agreementRecords  AgreementRecord[]
+  registrationRecords RegistrationRecord[]
+
+  @@unique([organizationId, bookingCode])
+  @@unique([organizationId, unitId])
+  @@index([organizationId])
+  @@index([organizationId, customerId])
+  @@index([organizationId, status])
+  @@index([organizationId, projectId])
+  @@map("bookings")
+}
+
+// ─── COMMISSIONS ─────────────────────────────────────────────────────────────
+
+model Commission {
+  id              String           @id @default(uuid())
+  organizationId  String           @map("organization_id")
+  bookingId       String           @map("booking_id")
+  agentId         String           @map("agent_id")
+  unitId          String           @map("unit_id")
+  agreementValue  BigInt           @default(0) @map("agreement_value")
+  commissionPct   Decimal          @default(0) @db.Decimal(5, 2) @map("commission_pct")
+  grossCommission BigInt           @default(0) @map("gross_commission")
+  gstAmount       BigInt           @default(0) @map("gst_amount")
+  tdsAmount       BigInt           @default(0) @map("tds_amount")
+  netPayable      BigInt           @default(0) @map("net_payable")
+  status          CommissionStatus @default(pending)
+  milestones      Json             @default("[]")
+  paidAmount      BigInt           @default(0) @map("paid_amount")
+  pendingAmount   BigInt           @default(0) @map("pending_amount")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  booking         Booking          @relation(fields: [bookingId], references: [id])
+
+  @@index([organizationId])
+  @@index([organizationId, agentId])
+  @@index([organizationId, bookingId])
+  @@index([organizationId, status])
+  @@map("commissions")
+}
+
+// ─── PAYMENTS ────────────────────────────────────────────────────────────────
+
+model Payment {
+  id              String        @id @default(uuid())
+  organizationId  String        @map("organization_id")
+  bookingId       String        @map("booking_id")
+  customerId      String        @map("customer_id")
+  unitId          String        @map("unit_id")
+  demandLetterId  String?       @map("demand_letter_id")
+  receiptNumber   String        @map("receipt_number")
+  amount          BigInt        @default(0)
+  paymentMode     PaymentMode   @default(cheque) @map("payment_mode")
+  transactionRef  String?       @map("transaction_ref")
+  paymentDate     DateTime      @map("payment_date")
+  status          PaymentStatus @default(under_process)
+  bounceReason    String?       @map("bounce_reason")
+  bounceDate      DateTime?     @map("bounce_date")
+  remarks         String?
+  recordedBy      String?       @map("recorded_by")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  booking         Booking       @relation(fields: [bookingId], references: [id])
+
+  @@unique([organizationId, receiptNumber])
+  @@index([organizationId])
+  @@index([organizationId, bookingId])
+  @@index([organizationId, customerId])
+  @@index([organizationId, status])
+  @@index([organizationId, paymentDate])
+  @@map("payments")
+}
+
+// ─── DEMAND LETTERS ──────────────────────────────────────────────────────────
+
+model DemandLetter {
+  id              String             @id @default(uuid())
+  organizationId  String             @map("organization_id")
+  bookingId       String             @map("booking_id")
+  customerId      String             @map("customer_id")
+  unitId          String             @map("unit_id")
+  letterCode      String             @map("letter_code")
+  milestoneName   String             @map("milestone_name")
+  milestonePct    Decimal            @default(0) @db.Decimal(5, 2) @map("milestone_pct")
+  demandAmount    BigInt             @default(0) @map("demand_amount")
+  dueDate         DateTime           @map("due_date")
+  status          DemandLetterStatus @default(pending)
+  paidAmount      BigInt             @default(0) @map("paid_amount")
+  remaining       BigInt             @default(0)
+  reminderCount   Int                @default(0) @map("reminder_count")
+  lastReminder    DateTime?          @map("last_reminder")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  // Relations
+  booking         Booking            @relation(fields: [bookingId], references: [id])
+  paymentSchedules PaymentSchedule[]
+
+  @@unique([organizationId, letterCode])
+  @@index([organizationId])
+  @@index([organizationId, bookingId])
+  @@index([organizationId, status])
+  @@map("demand_letters")
+}
+
+// ─── PAYMENT SCHEDULES (CLP Milestones) ──────────────────────────────────────
+
+model PaymentSchedule {
+  id              String          @id @default(uuid())
+  organizationId  String          @map("organization_id")
+  bookingId       String          @map("booking_id")
+  unitId          String          @map("unit_id")
+  milestoneOrder  Int             @map("milestone_order")
+  milestoneName   String          @map("milestone_name")
+  percentage      Decimal         @default(0) @db.Decimal(5, 2)
+  amount          BigInt          @default(0)
+  dueDate         DateTime?       @map("due_date")
+  status          ScheduleStatus  @default(upcoming)
+  linkedDemandId  String?         @map("linked_demand_id")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  booking         Booking         @relation(fields: [bookingId], references: [id])
+  demandLetter    DemandLetter?   @relation(fields: [linkedDemandId], references: [id])
+
+  @@index([organizationId, bookingId])
+  @@map("payment_schedules")
+}
+
+// ─── CANCELLATION RECORDS ────────────────────────────────────────────────────
+
+model CancellationRecord {
+  id                  String        @id @default(uuid())
+  organizationId      String        @map("organization_id")
+  bookingId           String        @map("booking_id")
+  unitId              String        @map("unit_id")
+  customerId          String        @map("customer_id")
+  cancelCode          String        @map("cancel_code")
+  cancellationDate    DateTime      @map("cancellation_date")
+  reason              String?
+  requestedBy         String?       @map("requested_by")
+  approvedBy          String?       @map("approved_by")
+
+  // Refund calculation (all BigInt in paise)
+  totalReceived       BigInt        @default(0) @map("total_received")
+  forfeiturePct       Decimal       @default(0) @db.Decimal(5, 2) @map("forfeiture_pct")
+  forfeitureAmt       BigInt        @default(0) @map("forfeiture_amt")
+  gstDeduction        BigInt        @default(0) @map("gst_deduction")
+  tdsDeduction        BigInt        @default(0) @map("tds_deduction")
+  brokerageRecovery   BigInt        @default(0) @map("brokerage_recovery")
+  adminFee            BigInt        @default(0) @map("admin_fee")
+  netRefund           BigInt        @default(0) @map("net_refund")
+
+  refundStatus        RefundStatus  @default(pending) @map("refund_status")
+  refundDate          DateTime?     @map("refund_date")
+  refundRef           String?       @map("refund_ref")
+  approvalId          String?       @map("approval_id")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  booking             Booking       @relation(fields: [bookingId], references: [id])
+
+  @@unique([organizationId, cancelCode])
+  @@index([organizationId])
+  @@index([organizationId, bookingId])
+  @@map("cancellation_records")
+}
+
+// ─── TRANSFER RECORDS ────────────────────────────────────────────────────────
+
+model TransferRecord {
+  id                String          @id @default(uuid())
+  organizationId    String          @map("organization_id")
+  unitId            String          @map("unit_id")
+  bookingId         String          @map("booking_id")
+  transferCode      String          @map("transfer_code")
+  transferDate      DateTime?       @map("transfer_date")
+  fromCustomerId    String          @map("from_customer_id")
+  toCustomerId      String          @map("to_customer_id")
+  transferFee       BigInt          @default(0) @map("transfer_fee")
+  nocDocumentId     String?         @map("noc_document_id")
+  status            TransferStatus  @default(pending_approval)
+  requestedBy       String?         @map("requested_by")
+  approvedBy        String?         @map("approved_by")
+  approvalId        String?         @map("approval_id")
+  remarks           String?
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  booking           Booking         @relation(fields: [bookingId], references: [id])
+
+  @@unique([organizationId, transferCode])
+  @@index([organizationId])
+  @@index([organizationId, unitId])
+  @@map("transfer_records")
+}
+
+// ─── POSSESSION RECORDS ──────────────────────────────────────────────────────
+
+model PossessionRecord {
+  id              String            @id @default(uuid())
+  organizationId  String            @map("organization_id")
+  unitId          String            @map("unit_id")
+  bookingId       String            @map("booking_id")
+  customerId      String            @map("customer_id")
+  possessionDate  DateTime?         @map("possession_date")
+  status          PossessionStatus  @default(pending)
+  checklist       Json              @default("{}")
+  handoverBy      String?           @map("handover_by")
+  remarks         String?
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  booking         Booking           @relation(fields: [bookingId], references: [id])
+  snagItems       SnagItem[]
+
+  @@index([organizationId])
+  @@index([organizationId, unitId])
+  @@map("possession_records")
+}
+
+// ─── SNAG ITEMS ──────────────────────────────────────────────────────────────
+
+model SnagItem {
+  id              String       @id @default(uuid())
+  organizationId  String       @map("organization_id")
+  possessionId    String       @map("possession_id")
+  unitId          String       @map("unit_id")
+  description     String
+  category        SnagCategory @default(civil)
+  priority        Priority     @default(medium)
+  status          SnagStatus   @default(open)
+  reportedDate    DateTime     @map("reported_date")
+  resolvedDate    DateTime?    @map("resolved_date")
+  resolvedBy      String?      @map("resolved_by")
+  remarks         String?
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  possession      PossessionRecord @relation(fields: [possessionId], references: [id])
+
+  @@index([organizationId, possessionId])
+  @@index([organizationId, status])
+  @@map("snag_items")
+}
+
+// ─── COMPLAINTS ──────────────────────────────────────────────────────────────
+
+model Complaint {
+  id              String           @id @default(uuid())
+  organizationId  String           @map("organization_id")
+  complaintCode   String           @map("complaint_code")
+  customerId      String           @map("customer_id")
+  unitId          String?          @map("unit_id")
+  bookingId       String?          @map("booking_id")
+  category        ComplaintCategory @default(general)
+  subject         String
+  description     String
+  priority        Priority         @default(medium)
+  status          ComplaintStatus  @default(open)
+  assignedTo      String?          @map("assigned_to")
+  slaHours        Int              @default(48) @map("sla_hours")
+  slaDeadline     DateTime?        @map("sla_deadline")
+  slaBreached     Boolean          @default(false) @map("sla_breached")
+  resolvedAt      DateTime?        @map("resolved_at")
+  resolution      String?
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@unique([organizationId, complaintCode])
+  @@index([organizationId])
+  @@index([organizationId, customerId])
+  @@index([organizationId, status])
+  @@map("complaints")
+}
+
+// ─── CUSTOMER DOCUMENTS ──────────────────────────────────────────────────────
+
+model CustomerDocument {
+  id              String           @id @default(uuid())
+  organizationId  String           @map("organization_id")
+  customerId      String           @map("customer_id")
+  bookingId       String?          @map("booking_id")
+  category        DocumentCategory @default(other)
+  fileName        String           @map("file_name")
+  fileKey         String           @map("file_key")
+  fileSize        BigInt           @default(0) @map("file_size")
+  mimeType        String?          @map("mime_type")
+  status          DocumentStatus   @default(uploaded)
+  verifiedBy      String?          @map("verified_by")
+  remarks         String?
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@index([organizationId, customerId])
+  @@index([organizationId, category])
+  @@map("customer_documents")
+}
+
+// ─── COMMUNICATION LOGS ──────────────────────────────────────────────────────
+
+model CommunicationLog {
+  id                String    @id @default(uuid())
+  organizationId    String    @map("organization_id")
+  customerId        String?   @map("customer_id")
+  leadId            String?   @map("lead_id")
+  channel           Channel   @default(call)
+  direction         Direction @default(outbound)
+  subject           String?
+  content           String?
+  initiatedBy       String?   @map("initiated_by")
+  durationSeconds   Int?      @map("duration_seconds")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  @@index([organizationId, customerId])
+  @@index([organizationId, leadId])
+  @@map("communication_logs")
+}
+
+// ─── LOAN RECORDS ────────────────────────────────────────────────────────────
+
+model LoanRecord {
+  id                String      @id @default(uuid())
+  organizationId    String      @map("organization_id")
+  customerId        String      @map("customer_id")
+  bookingId         String      @map("booking_id")
+  bankName          String      @map("bank_name")
+  loanAmount        BigInt      @default(0) @map("loan_amount")
+  sanctionedAmount  BigInt      @default(0) @map("sanctioned_amount")
+  interestRate      Decimal     @default(0) @db.Decimal(5, 2) @map("interest_rate")
+  tenureMonths      Int         @default(0) @map("tenure_months")
+  status            LoanStatus  @default(applied)
+  disbursements     Json        @default("[]")
+  sanctionDate      DateTime?   @map("sanction_date")
+  remarks           String?
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  booking           Booking     @relation(fields: [bookingId], references: [id])
+
+  @@index([organizationId, customerId])
+  @@index([organizationId, bookingId])
+  @@map("loan_records")
+}
+
+// ─── AGREEMENT RECORDS ───────────────────────────────────────────────────────
+
+model AgreementRecord {
+  id                String    @id @default(uuid())
+  organizationId    String    @map("organization_id")
+  bookingId         String    @map("booking_id")
+  customerId        String    @map("customer_id")
+  unitId            String    @map("unit_id")
+  agreementDate     DateTime  @map("agreement_date")
+  agreementValue    BigInt    @default(0) @map("agreement_value")
+  stampDutyPaid     BigInt    @default(0) @map("stamp_duty_paid")
+  documentId        String?   @map("document_id")
+  remarks           String?
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  booking           Booking   @relation(fields: [bookingId], references: [id])
+
+  @@index([organizationId, bookingId])
+  @@map("agreement_records")
+}
+
+// ─── REGISTRATION RECORDS ────────────────────────────────────────────────────
+
+model RegistrationRecord {
+  id                  String    @id @default(uuid())
+  organizationId      String    @map("organization_id")
+  bookingId           String    @map("booking_id")
+  customerId          String    @map("customer_id")
+  unitId              String    @map("unit_id")
+  registrationDate    DateTime  @map("registration_date")
+  registrationNumber  String    @map("registration_number")
+  subRegistrar        String?   @map("sub_registrar")
+  registrationFee     BigInt    @default(0) @map("registration_fee")
+  documentId          String?   @map("document_id")
+  remarks             String?
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  booking             Booking   @relation(fields: [bookingId], references: [id])
+
+  @@index([organizationId, bookingId])
+  @@map("registration_records")
+}
+
+// ─── APPROVAL REQUESTS ───────────────────────────────────────────────────────
+
+model ApprovalRequest {
+  id              String              @id @default(uuid())
+  organizationId  String              @map("organization_id")
+  requestType     ApprovalRequestType @map("request_type")
+  entityType      String              @map("entity_type")
+  entityId        String              @map("entity_id")
+  requestedBy     String?             @map("requested_by")
+  requestData     Json                @default("{}") @map("request_data")
+  justification   String?
+  status          ApprovalStatus      @default(pending)
+  reviewedBy      String?             @map("reviewed_by")
+  reviewedAt      DateTime?           @map("reviewed_at")
+  reviewRemarks   String?             @map("review_remarks")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, requestType])
+  @@map("approval_requests")
+}
+
+// ─── AUDIT LOGS ──────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id              String      @id @default(uuid())
+  organizationId  String      @map("organization_id")
+  actorId         String?     @map("actor_id")
+  actorRole       String?     @map("actor_role")
+  action          AuditAction
+  entityType      String      @map("entity_type")
+  entityId        String      @map("entity_id")
+  entityCode      String?     @map("entity_code")
+  beforeState     Json?       @map("before_state")
+  afterState      Json?       @map("after_state")
+  changes         Json?
+  metadata        Json?
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  @@index([organizationId])
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, actorId])
+  @@index([organizationId, action])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
