@@ -4,92 +4,339 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.8.0] — 2026-02-28
+## [0.12.0] — 2026-03-01
 
-### 👥 Phase 8 — Customers, Documents, Complaints & Communications
+### 🔒 Phase 12 — Production Hardening
 
-> **Scope:** Complete customer management, KYC document uploads,
-> SLA-driven complaint tracking, and communication logging.
+> **Scope:** Security headers, rate limiting, request
+> tracing, structured logging, global error handling.
 > **Status:** ✅ Complete
 
 ### Added
+- src/middleware/rateLimiter.js — three tiered limiters:
+  apiRateLimiter (120/min all routes), authRateLimiter
+  (20/15min on /v1/auth), analyticsRateLimiter (20/min).
+- src/middleware/requestValidator.js — validateContentType
+  (415 on non-JSON POST/PATCH/PUT), attachRequestId
+  (injects x-request-id UUID on every request/response).
+- src/shared/errors.js — enhanced with globalErrorHandler
+  covering Prisma P2002/P2025/P2003 codes, JWT errors,
+  Zod errors, and operational AppErrors. Added aliases
+  AuthenticationError and AuthorizationError for backward
+  compatibility with existing middleware.
+- src/config/logger.js — structured JSON logger with
+  4 levels (error/warn/info/debug), HTTP request logger,
+  environment-aware log level.
+- helmet() — security headers on all responses.
+- compression() — gzip response compression.
+- Packages: helmet@8.0.0, compression@1.8.0,
+  express-rate-limit@7.5.0
 
-#### Phase 8A — Customers & Documents Modules
-- Implemented src/modules/customers/customer.schema.js —
-  Zod schemas enforcing PAN format (ABCDE1234F), 12-digit
-  Aadhaar, and Indian mobile numbers.
-- Implemented src/modules/customers/customer.service.js —
-  listCustomers, getCustomer (with linked bookings + metrics),
-  createCustomer (unique PAN + mobile per org, sequential
-  CUST-XXXX code), updateCustomer, verifyKyc (blocks if no[]
-  PAN on file).
-- Implemented maskSensitiveData helper — hides exact PAN
-  and Aadhaar components from non-admin/finance roles.
-- Implemented src/modules/documents/document.schema.js —
-  Zod schemas for upload and verify flows.
-- Implemented src/modules/documents/document.service.js —
-  uploadDocument (auto-updates customer.kycDocuments JSONB
-  on approved categories), verifyDocument (only targets
-  uploaded status).
-
-#### Phase 8B — Complaints & Communications Modules
-- Implemented src/modules/complaints/complaint.schema.js —
-  Zod schemas for create, update, resolve, and escalate.
-- Implemented src/modules/complaints/complaint.service.js —
-  listComplaints, getComplaint (dynamic SLA breach check),
-  createComplaint (auto-calculates SLA deadline based on priority),
-  updateComplaint (auto-sets to in_progress on assignment),
-  resolveComplaint (computes resolutionHours), escalateComplaint
-  (upgrades priority to high, flags breach).
-- Implemented src/modules/communications/communication.schema.js —
-  Zod schema requiring EITHER customerId or leadId (via .refine),
-  blocks duration on non-call channels.
-- Implemented src/modules/communications/communication.service.js —
-  logCommunication, getCommunicationSummary (groups metrics
-  by channel, direction, and aggregates total call duration).
-- Mounted all 4 routers in server.js (/v1/customers, /v1/documents,
-  /v1/complaints, /v1/communications).
+### File Manifest
+src/middleware/rateLimiter.js        (created)
+src/middleware/requestValidator.js   (created)
+src/shared/errors.js                 (updated)
+src/config/logger.js                 (created)
+src/server.js                        (updated)
+package.json                         (updated)
 
 ---
 
-## [0.7.0] — 2026-02-28
+## [0.11.0] — 2026-03-01
 
-### 🏢 Phase 7 — Post-Sales Module
+### ✅ Phase 11 — Approvals + Loans
 
-> **Scope:** Payments, demand letters, cancellations, transfers,
-> possession handover, and snag items.
+> **Scope:** Approval workflow management and loan
+> records with disbursement tracking.
+> **Status:** ✅ Complete
+
+### Added
+- Approvals module — createApproval, reviewApproval
+  (cannot self-approve), listApprovals (non-admin sees
+  own only), getPendingCount (grouped by type),
+  hoursPending calculated on get. Mounted /v1/approvals.
+- Loans module — createLoan (EMI auto-calculated via
+  standard formula, validates against booking value),
+  recordDisbursement (JSONB array append, auto-status
+  to disbursed when fully drawn), updateLoanStatus,
+  updateLoan. Mounted /v1/loans.
+
+### File Manifest
+src/modules/approvals/approval.schema.js   (created)
+src/modules/approvals/approval.service.js  (created)
+src/modules/approvals/approval.routes.js   (created)
+src/modules/loans/loan.schema.js           (created)
+src/modules/loans/loan.service.js          (created)
+src/modules/loans/loan.routes.js           (created)
+src/server.js                              (updated)
+
+---
+
+## [0.10.0] — 2026-03-01
+
+### 📊 Phase 10 — Analytics + Audit Log
+
+> **Scope:** Executive dashboard, sales and collection
+> analytics, automatic audit trail on all mutations.
+> **Status:** ✅ Complete
+
+### Added
+- Analytics module — getExecutiveDashboard (Redis 5min
+  cache, inventory/booking/revenue/lead/complaint KPIs),
+  getSalesAnalytics (6-month trend, by-project, by-config),
+  getCollectionAnalytics (by payment mode, overdue summary).
+  Mounted /v1/analytics.
+- Audit module — listAuditLogs, getEntityAuditTrail,
+  getUserActivity. Mounted /v1/audit.
+- auditLogger middleware — auto-logs all POST/PATCH/PUT/
+  DELETE mutations via res.on('finish'). Sanitizes
+  password/PAN/Aadhaar from metadata. Skips GET and
+  configured SKIP_ROUTES. Never crashes requests.
+  Mounted after all routes, before error handler.
+
+### File Manifest
+src/modules/analytics/analytics.service.js  (created)
+src/modules/analytics/analytics.routes.js   (created)
+src/modules/audit/audit.service.js          (created)
+src/modules/audit/audit.routes.js           (created)
+src/middleware/auditLogger.js               (created)
+src/server.js                               (updated)
+
+---
+
+## [0.9.0] — 2026-03-01
+
+### 👥 Phase 9 — Sales Team + Agents
+
+> **Scope:** Sales person management with performance
+> tracking and agent/broker management with commission
+> payment recording.
+> **Status:** ✅ Complete
+
+### Added
+- Sales Team module — createSalesPerson (SP code +
+  mobile uniqueness, reportingTo validation),
+  getSalesPerson (performance: totalBookings,
+  activeBlocks, monthlyRevenue, achievementPct),
+  getTeamPerformance (sorted by achievement, team
+  summary), deactivation blocked on active unit blocks.
+  Mounted /v1/sales-team.
+- Agents module — createAgent (agentCode + RERA +
+  mobile uniqueness), recordCommissionPayment (atomic:
+  updates commission + agent running totals, payment
+  overflow blocked), rateAgent (0-5), deactivation
+  blocked on pending commissions.
+  Mounted /v1/agents.
+
+### File Manifest
+src/modules/salesTeam/salesPerson.schema.js  (created)
+src/modules/salesTeam/salesPerson.service.js (created)
+src/modules/salesTeam/salesPerson.routes.js  (created)
+src/modules/agents/agent.schema.js           (created)
+src/modules/agents/agent.service.js          (created)
+src/modules/agents/agent.routes.js           (created)
+src/server.js                                (updated x2)
+
+---
+## [0.8.0] — 2026-03-01
+
+### 👥 Phase 8 — Customers, Documents, Complaints & Communications
+
+> **Scope:** Customer profile management with KYC, document
+> registry, complaint SLA engine, and communication logging.
 > **Status:** ✅ Complete
 
 ### Added
 
-#### Phase 7A — Payments & Demand Letters
-- Implemented src/modules/postSales/payment.schema.js and
-  payment.service.js — recordPayment (links to demand letter,
-  generates RCT-XXXX), updatePaymentStatus (handles bounces
-  by reversing paid amount on linked demand letter).
-- Implemented src/modules/postSales/demandLetter.schema.js and
-  demandLetter.service.js — createDemandLetter, sendReminder
-  (throttled to 24 hours per letter).
+#### Phase 8A — Customers Module
+- Implemented customer.schema.js — PAN regex validation
+  (ABCDE1234F format), Aadhaar 12-digit validation, Indian
+  mobile regex, updateSchema omits PAN/Aadhaar (immutable).
+- Implemented customer.service.js — generateCustomerCode
+  (CUST-XXXX), maskSensitiveData (hides PAN + Aadhaar for
+  non-admin/finance roles), createCustomer (PAN uniqueness
+  + mobile uniqueness per org), updateCustomer, verifyKyc
+  (requires PAN on file before verification).
+- Implemented customer.routes.js — 5 endpoints with RBAC.
+- Mounted at /v1/customers.
 
-#### Phase 7B — Cancellations & Transfers
-- Implemented src/modules/postSales/cancellation.schema.js and
-  cancellation.service.js — initiateCancellation (creates an
-  ApprovalRequest), previewRefund, processCancellation
-  (releases unit, cancels commissions, updates booking status
-  atomically).
-- Implemented src/modules/postSales/transfer.schema.js and
-  transfer.service.js — initiateTransfer, processTransfer
-  (updates unit owner, links new customer atomically).
+#### Phase 8A — Documents Module
+- Implemented document.schema.js — 12 document categories,
+  10MB file size limit validation.
+- Implemented document.service.js — uploadDocument (registers
+  S3 fileKey in DB, updates customer kycDocuments JSONB for
+  KYC categories), verifyDocument (only uploaded status can
+  be verified/rejected), listDocuments with downloadUrl
+  placeholder (Phase 12 replaces with S3 presigned URLs).
+- Implemented document.routes.js — 3 endpoints with RBAC.
+- Mounted at /v1/documents.
 
-#### Phase 7C — Possession & Snag Items
-- Implemented src/modules/postSales/possession.schema.js and
-  possession.service.js — list/get possessions, updatePossession,
-  completePossession (blocks if checklist incomplete, pushes
-  status to possession_handed natively).
-- Integrated Snag Item endpoints inside possession service —
-  createSnag (blocks on completed possessions), updateSnag
-  (auto-injects resolvedDate on resolved status).
-- Mounted all 5 routers in server.js.
+#### Phase 8B — Complaints Module
+- Implemented complaint.schema.js — create, update, resolve
+  (requires 10+ char resolution), escalate schemas.
+- Implemented complaint.service.js — generateComplaintCode
+  (CMP-XXXX), calculateSlaDeadline (high=24h, medium=48h,
+  low=72h), createComplaint (auto SLA deadline),
+  getComplaint (real-time SLA breach detection + DB update),
+  updateComplaint (auto in_progress when assigned),
+  resolveComplaint (resolutionHours + withinSla returned),
+  escalateComplaint (priority forced to high, slaBreached
+  set true).
+- Implemented complaint.routes.js — 6 endpoints with RBAC.
+- Mounted at /v1/complaints.
+
+#### Phase 8B — Communications Module
+- Implemented communication.schema.js — Zod refine
+  validation requiring either customerId or leadId.
+- Implemented communication.service.js — listCommunications,
+  logCommunication (durationSeconds rejected for non-call
+  channels), getCommunicationSummary (groupBy channel +
+  direction, total call duration in seconds and minutes).
+- Implemented communication.routes.js — 3 endpoints.
+- Mounted at /v1/communications.
+
+### API Endpoints Added
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | /v1/customers | customers:read |
+| POST | /v1/customers | customers:read |
+| GET | /v1/customers/:id | customers:read |
+| PATCH | /v1/customers/:id | customers:update |
+| PATCH | /v1/customers/:id/kyc | customers:update |
+| GET | /v1/documents | documents:read |
+| POST | /v1/documents | documents:create |
+| PATCH | /v1/documents/:id/verify | documents:update |
+| GET | /v1/complaints | complaints:read |
+| POST | /v1/complaints | complaints:create |
+| GET | /v1/complaints/:id | complaints:read |
+| PATCH | /v1/complaints/:id | complaints:update |
+| POST | /v1/complaints/:id/resolve | complaints:update |
+| POST | /v1/complaints/:id/escalate | complaints:update |
+| GET | /v1/communications | communications:read |
+| POST | /v1/communications | communications:create |
+| GET | /v1/communications/summary | communications:read |
+
+### File Manifest
+
+src/modules/customers/customer.schema.js        (created)
+src/modules/customers/customer.service.js       (created)
+src/modules/customers/customer.routes.js        (created)
+src/modules/documents/document.schema.js        (created)
+src/modules/documents/document.service.js       (created)
+src/modules/documents/document.routes.js        (created)
+src/modules/complaints/complaint.schema.js      (created)
+src/modules/complaints/complaint.service.js     (created)
+src/modules/complaints/complaint.routes.js      (created)
+src/modules/communications/communication.schema.js  (created)
+src/modules/communications/communication.service.js (created)
+src/modules/communications/communication.routes.js  (created)
+src/server.js                                   (updated x2)
+
+---
+
+## [0.7.0] — 2026-03-01
+
+### 🏦 Phase 7 — Post-Sales Module
+
+> **Scope:** Complete post-sale lifecycle — payments,
+> demand letters, cancellations, transfers, possession
+> handover, and snag management.
+> **Status:** ✅ Complete
+
+### Added
+
+#### Phase 7A — Payments Module
+- Implemented payment.schema.js — recordPayment and
+  updatePaymentStatus schemas.
+- Implemented payment.service.js — generateReceiptNumber
+  (RCPT-XXXX), recordPayment (updates demand letter
+  paidAmount + remaining when demandLetterId provided),
+  updatePaymentStatus (bounce reverses demand letter
+  paid amount, cleared updates PaymentSchedule to paid),
+  getBookingPaymentSummary (collectionPct calculation).
+- Implemented payment.routes.js — 4 endpoints.
+- Mounted at /v1/payments.
+
+#### Phase 7A — Demand Letters Module
+- Implemented demandLetter.schema.js — create and
+  reminder schemas.
+- Implemented demandLetter.service.js — generateLetterCode
+  (DL-{bookingCode}-XX), createDemandLetter, getDemandLetter
+  (with payment schedules), sendReminder (24-hour throttle,
+  reminderCount tracking).
+- Implemented demandLetter.routes.js — 4 endpoints.
+- Mounted at /v1/demand-letters.
+
+#### Phase 7B — Cancellations Module
+- Implemented cancellation.schema.js — initiate and
+  process schemas.
+- Implemented cancellation.service.js —
+  getCancellationPreview (refund breakdown before
+  confirming), initiateCancellation (uses calculateRefund,
+  auto-creates ApprovalRequest atomically, generates
+  CAN-XXXX code), processCancellation (releases unit to
+  available, cancels commissions, updates booking to
+  cancelled — all atomic).
+- Implemented cancellation.routes.js — 4 endpoints.
+- Mounted at /v1/cancellations.
+
+#### Phase 7B — Transfers Module
+- Implemented transfer.schema.js — initiate and
+  process schemas.
+- Implemented transfer.service.js — initiateTransfer
+  (validates booking state, prevents self-transfer,
+  auto-creates ApprovalRequest atomically, generates
+  TRF-XXXX), processTransfer (updates booking + unit +
+  possession customerId in one transaction).
+- Implemented transfer.routes.js — 4 endpoints.
+- Mounted at /v1/transfers.
+
+#### Phase 7C — Possession + Snag Module
+- Implemented possession.schema.js — update, complete,
+  createSnag, updateSnag schemas.
+- Implemented possession.service.js — listPossessions,
+  getPossession (checklist % + snag summary),
+  updatePossession (checklist merge preserves existing),
+  completePossession (enforces all checklist items true,
+  warns on open snags but does not block, updates booking
+  + unit to possession_handed atomically), createSnag
+  (rejects on completed possession), updateSnag
+  (auto-sets resolvedDate, resolvedBy required).
+- Implemented possession.routes.js — 7 endpoints.
+- Mounted at /v1/possessions.
+
+### Business Rules Implemented
+
+| Rule | Module |
+|---|---|
+| Bounce reverses demand letter paid amount | payments |
+| 24hr reminder throttle | demand-letters |
+| Cancellation preview before confirming | cancellations |
+| Unit released atomically on cancellation | cancellations |
+| Commission cancelled on booking cancel | cancellations |
+| Transfer blocks self-transfer | transfers |
+| Checklist 100% required to complete possession | possessions |
+| Open snags warn but do not block possession | possessions |
+
+### File Manifest
+
+src/modules/postSales/payment.schema.js         (created)
+src/modules/postSales/payment.service.js        (created)
+src/modules/postSales/payment.routes.js         (created)
+src/modules/postSales/demandLetter.schema.js    (created)
+src/modules/postSales/demandLetter.service.js   (created)
+src/modules/postSales/demandLetter.routes.js    (created)
+src/modules/postSales/cancellation.schema.js    (created)
+src/modules/postSales/cancellation.service.js   (created)
+src/modules/postSales/cancellation.routes.js    (created)
+src/modules/postSales/transfer.schema.js        (created)
+src/modules/postSales/transfer.service.js       (created)
+src/modules/postSales/transfer.routes.js        (created)
+src/modules/postSales/possession.schema.js      (created)
+src/modules/postSales/possession.service.js     (created)
+src/modules/postSales/possession.routes.js      (created)
+src/server.js                                   (updated x3)
 
 ---
 

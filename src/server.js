@@ -11,6 +11,13 @@ import customerRouter from './modules/customers/customer.routes.js';
 import documentRouter from './modules/documents/document.routes.js';
 import complaintRouter from './modules/complaints/complaint.routes.js';
 import communicationRouter from './modules/communications/communication.routes.js';
+import salesTeamRouter from './modules/salesTeam/salesPerson.routes.js';
+import agentRouter from './modules/agents/agent.routes.js';
+import analyticsRouter from './modules/analytics/analytics.routes.js';
+import approvalRouter from './modules/approvals/approval.routes.js';
+import auditRouter from './modules/audit/audit.routes.js';
+import loanRouter from './modules/loans/loan.routes.js';
+import { auditLogger } from './middleware/auditLogger.js';
 import bookingRouter from './modules/salesEngine/booking.routes.js';
 import {
     blockExpiryWorker,
@@ -23,12 +30,22 @@ import {
 } from './jobs/demandOverdue.job.js';
 import cors from 'cors';
 import helmet from 'helmet';
+import compression from 'compression';
 import morgan from 'morgan';
 import { env, isDev } from './config/env.js';
 import prisma from './config/database.js';
 import { redis } from './config/redis.js';
-import { apiRateLimiter } from './middleware/rateLimit.js';
-import { AppError, formatErrorResponse } from './shared/errors.js';
+import {
+    authRateLimiter,
+    apiRateLimiter,
+    analyticsRateLimiter,
+} from './middleware/rateLimiter.js';
+import {
+    validateContentType,
+    attachRequestId,
+} from './middleware/requestValidator.js';
+import { globalErrorHandler, AppError } from './shared/errors.js';
+import { logger } from './config/logger.js';
 import authRouter from './modules/auth/auth.routes.js';
 import projectRouter from './modules/projects/project.routes.js';
 import unitRouter from './modules/units/unit.routes.js';
@@ -36,6 +53,10 @@ const app = express();
 
 // ── Security Middleware ─────────────────────────────────────────────────────
 app.use(helmet());
+app.use(compression());
+app.use(attachRequestId);
+app.use(apiRateLimiter);
+app.use(validateContentType);
 
 app.use(cors({
     origin: env.CORS_ORIGIN,
@@ -50,9 +71,6 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ── HTTP Request Logging ────────────────────────────────────────────────────
 app.use(morgan(isDev ? 'dev' : 'combined'));
-
-// ── Rate Limiting ───────────────────────────────────────────────────────────
-app.use('/v1', apiRateLimiter);
 
 // ── Health Check (no auth required) ────────────────────────────────────────
 app.get('/health', async (req, res) => {
@@ -90,7 +108,7 @@ app.get('/health', async (req, res) => {
 });
 
 // ── API Routes ───────────────────────────────────────────────────────────────
-app.use('/v1/auth', authRouter);
+app.use('/v1/auth', authRateLimiter, authRouter);
 app.use('/v1/projects', projectRouter);
 app.use('/v1/units', unitRouter);
 app.use('/v1/bookings', bookingRouter);
@@ -106,6 +124,12 @@ app.use('/v1/customers', customerRouter);
 app.use('/v1/documents', documentRouter);
 app.use('/v1/complaints', complaintRouter);
 app.use('/v1/communications', communicationRouter);
+app.use('/v1/sales-team', salesTeamRouter);
+app.use('/v1/agents', agentRouter);
+app.use('/v1/analytics', analyticsRateLimiter, analyticsRouter);
+app.use('/v1/audit', auditRouter);
+app.use('/v1/approvals', approvalRouter);
+app.use('/v1/loans', loanRouter);
 // Base API info route
 app.get('/v1', (req, res) => {
     res.json({
@@ -121,31 +145,22 @@ app.use((req, res, next) => {
     next(new AppError(`Route ${req.method} ${req.path} not found`, 404, 'ROUTE_NOT_FOUND'));
 });
 
+app.use(auditLogger);
+
 // ── Global Error Handler ────────────────────────────────────────────────────
 // Must have 4 parameters for Express to treat it as error middleware
-app.use((err, req, res, next) => {
-    const statusCode = err.statusCode || 500;
-    const isOperational = err.isOperational || false;
-
-    // Log all 500s
-    if (statusCode >= 500) {
-        console.error('UNHANDLED ERROR:', err);
-    }
-
-    res.status(statusCode).json(formatErrorResponse(err, isDev));
-});
+app.use(globalErrorHandler);
 
 // ── Server Startup ──────────────────────────────────────────────────────────
 const PORT = parseInt(env.PORT, 10);
 
 const server = app.listen(PORT, async () => {
-    console.log('=========================================');
-    console.log(`  ${env.APP_NAME} Backend`);
-    console.log(`  Environment : ${env.NODE_ENV}`);
-    console.log(`  Port        : ${PORT}`);
-    console.log(`  API         : http://localhost:${PORT}/v1`);
-    console.log(`  Health      : http://localhost:${PORT}/health`);
-    console.log('=========================================');
+    logger.info('LeadFlow AI Backend started', {
+        environment: env.NODE_ENV,
+        port: PORT,
+        api: `http://localhost:${PORT}/v1`,
+        health: `http://localhost:${PORT}/health`,
+    });
 
     // ── Start Background Jobs ───────────────────────────────────────────────────
     try {
