@@ -4,10 +4,9 @@ import { requireOrganization } from '../../middleware/organization.js';
 import { requirePermission } from '../../middleware/rbac.js';
 import {
     validateBody,
-    createSiteVisitSchema,
-    updateSiteVisitSchema,
-} from './siteVisit.schema.js';
-import * as siteVisitService from './siteVisit.service.js';
+    logCommunicationSchema,
+} from './communication.schema.js';
+import * as communicationService from './communication.service.js';
 
 const router = Router();
 
@@ -16,13 +15,12 @@ router.use(requireOrganization);
 
 router.get(
     '/',
-    requirePermission('site_visits:read'),
+    requirePermission('communications:read'),
     async (req, res, next) => {
         try {
-            const result = await siteVisitService.listSiteVisits(
+            const result = await communicationService.listCommunications(
                 req.organizationId,
-                req.query,
-                req.user
+                req.query
             );
             res.json(result);
         } catch (error) {
@@ -33,11 +31,11 @@ router.get(
 
 router.post(
     '/',
-    requirePermission('site_visits:create'),
-    validateBody(createSiteVisitSchema),
+    requirePermission('communications:create'),
+    validateBody(logCommunicationSchema),
     async (req, res, next) => {
         try {
-            const result = await siteVisitService.createSiteVisit(
+            const result = await communicationService.logCommunication(
                 req.organizationId,
                 req.user.userId,
                 req.body
@@ -49,18 +47,16 @@ router.post(
     }
 );
 
-router.patch(
-    '/:id',
-    requirePermission('site_visits:update'),
-    validateBody(updateSiteVisitSchema),
+router.get(
+    '/summary',
+    requirePermission('communications:read'),
     async (req, res, next) => {
         try {
-            const result = await siteVisitService.updateSiteVisit(
-                req.organizationId,
-                req.params.id,
-                req.user.userId,
-                req.body
-            );
+            const result =
+                await communicationService.getCommunicationSummary(
+                    req.organizationId,
+                    req.query
+                );
             res.json(result);
         } catch (error) {
             next(error);

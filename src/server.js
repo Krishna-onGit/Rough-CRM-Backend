@@ -1,4 +1,26 @@
 import express from 'express';
+import leadRouter from './modules/preSales/lead.routes.js';
+import siteVisitRouter from './modules/preSales/siteVisit.routes.js';
+import followUpRouter from './modules/preSales/followUp.routes.js';
+import paymentRouter from './modules/postSales/payment.routes.js';
+import demandLetterRouter from './modules/postSales/demandLetter.routes.js';
+import cancellationRouter from './modules/postSales/cancellation.routes.js';
+import transferRouter from './modules/postSales/transfer.routes.js';
+import possessionRouter from './modules/postSales/possession.routes.js';
+import customerRouter from './modules/customers/customer.routes.js';
+import documentRouter from './modules/documents/document.routes.js';
+import complaintRouter from './modules/complaints/complaint.routes.js';
+import communicationRouter from './modules/communications/communication.routes.js';
+import bookingRouter from './modules/salesEngine/booking.routes.js';
+import {
+    blockExpiryWorker,
+    scheduleBlockExpiryJob,
+} from './jobs/blockExpiry.job.js';
+
+import {
+    demandOverdueWorker,
+    scheduleDemandOverdueJob,
+} from './jobs/demandOverdue.job.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -71,6 +93,19 @@ app.get('/health', async (req, res) => {
 app.use('/v1/auth', authRouter);
 app.use('/v1/projects', projectRouter);
 app.use('/v1/units', unitRouter);
+app.use('/v1/bookings', bookingRouter);
+app.use('/v1/leads', leadRouter);
+app.use('/v1/site-visits', siteVisitRouter);
+app.use('/v1/follow-ups', followUpRouter);
+app.use('/v1/payments', paymentRouter);
+app.use('/v1/demand-letters', demandLetterRouter);
+app.use('/v1/cancellations', cancellationRouter);
+app.use('/v1/transfers', transferRouter);
+app.use('/v1/possessions', possessionRouter);
+app.use('/v1/customers', customerRouter);
+app.use('/v1/documents', documentRouter);
+app.use('/v1/complaints', complaintRouter);
+app.use('/v1/communications', communicationRouter);
 // Base API info route
 app.get('/v1', (req, res) => {
     res.json({
@@ -103,7 +138,7 @@ app.use((err, req, res, next) => {
 // ── Server Startup ──────────────────────────────────────────────────────────
 const PORT = parseInt(env.PORT, 10);
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
     console.log('=========================================');
     console.log(`  ${env.APP_NAME} Backend`);
     console.log(`  Environment : ${env.NODE_ENV}`);
@@ -111,6 +146,15 @@ const server = app.listen(PORT, () => {
     console.log(`  API         : http://localhost:${PORT}/v1`);
     console.log(`  Health      : http://localhost:${PORT}/health`);
     console.log('=========================================');
+
+    // ── Start Background Jobs ───────────────────────────────────────────────────
+    try {
+        await scheduleBlockExpiryJob();
+        await scheduleDemandOverdueJob();
+        console.log('Background jobs scheduled successfully.');
+    } catch (err) {
+        console.error('Failed to schedule background jobs:', err.message);
+    }
 });
 
 // ── Graceful Shutdown ───────────────────────────────────────────────────────

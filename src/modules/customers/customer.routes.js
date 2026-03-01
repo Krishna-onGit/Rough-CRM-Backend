@@ -4,10 +4,11 @@ import { requireOrganization } from '../../middleware/organization.js';
 import { requirePermission } from '../../middleware/rbac.js';
 import {
     validateBody,
-    recordPaymentSchema,
-    updatePaymentStatusSchema,
-} from './payment.schema.js';
-import * as paymentService from './payment.service.js';
+    createCustomerSchema,
+    updateCustomerSchema,
+    verifyKycSchema,
+} from './customer.schema.js';
+import * as customerService from './customer.service.js';
 
 const router = Router();
 
@@ -16,12 +17,13 @@ router.use(requireOrganization);
 
 router.get(
     '/',
-    requirePermission('payments:read'),
+    requirePermission('customers:read'),
     async (req, res, next) => {
         try {
-            const result = await paymentService.listPayments(
+            const result = await customerService.listCustomers(
                 req.organizationId,
-                req.query
+                req.query,
+                req.user
             );
             res.json(result);
         } catch (error) {
@@ -32,11 +34,11 @@ router.get(
 
 router.post(
     '/',
-    requirePermission('payments:create'),
-    validateBody(recordPaymentSchema),
+    requirePermission('customers:read'),
+    validateBody(createCustomerSchema),
     async (req, res, next) => {
         try {
-            const result = await paymentService.recordPayment(
+            const result = await customerService.createCustomer(
                 req.organizationId,
                 req.user.userId,
                 req.body
@@ -48,13 +50,30 @@ router.post(
     }
 );
 
-router.patch(
-    '/:id/status',
-    requirePermission('payments:update'),
-    validateBody(updatePaymentStatusSchema),
+router.get(
+    '/:id',
+    requirePermission('customers:read'),
     async (req, res, next) => {
         try {
-            const result = await paymentService.updatePaymentStatus(
+            const result = await customerService.getCustomer(
+                req.organizationId,
+                req.params.id,
+                req.user
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+router.patch(
+    '/:id',
+    requirePermission('customers:update'),
+    validateBody(updateCustomerSchema),
+    async (req, res, next) => {
+        try {
+            const result = await customerService.updateCustomer(
                 req.organizationId,
                 req.params.id,
                 req.user.userId,
@@ -67,14 +86,17 @@ router.patch(
     }
 );
 
-router.get(
-    '/booking/:bookingId/summary',
-    requirePermission('payments:read'),
+router.patch(
+    '/:id/kyc',
+    requirePermission('customers:update'),
+    validateBody(verifyKycSchema),
     async (req, res, next) => {
         try {
-            const result = await paymentService.getBookingPaymentSummary(
+            const result = await customerService.verifyKyc(
                 req.organizationId,
-                req.params.bookingId
+                req.params.id,
+                req.user.userId,
+                req.body
             );
             res.json(result);
         } catch (error) {

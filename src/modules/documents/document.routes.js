@@ -4,10 +4,10 @@ import { requireOrganization } from '../../middleware/organization.js';
 import { requirePermission } from '../../middleware/rbac.js';
 import {
     validateBody,
-    createSiteVisitSchema,
-    updateSiteVisitSchema,
-} from './siteVisit.schema.js';
-import * as siteVisitService from './siteVisit.service.js';
+    uploadDocumentSchema,
+    verifyDocumentSchema,
+} from './document.schema.js';
+import * as documentService from './document.service.js';
 
 const router = Router();
 
@@ -16,13 +16,12 @@ router.use(requireOrganization);
 
 router.get(
     '/',
-    requirePermission('site_visits:read'),
+    requirePermission('documents:read'),
     async (req, res, next) => {
         try {
-            const result = await siteVisitService.listSiteVisits(
+            const result = await documentService.listDocuments(
                 req.organizationId,
-                req.query,
-                req.user
+                req.query
             );
             res.json(result);
         } catch (error) {
@@ -33,11 +32,11 @@ router.get(
 
 router.post(
     '/',
-    requirePermission('site_visits:create'),
-    validateBody(createSiteVisitSchema),
+    requirePermission('documents:create'),
+    validateBody(uploadDocumentSchema),
     async (req, res, next) => {
         try {
-            const result = await siteVisitService.createSiteVisit(
+            const result = await documentService.uploadDocument(
                 req.organizationId,
                 req.user.userId,
                 req.body
@@ -50,12 +49,12 @@ router.post(
 );
 
 router.patch(
-    '/:id',
-    requirePermission('site_visits:update'),
-    validateBody(updateSiteVisitSchema),
+    '/:id/verify',
+    requirePermission('documents:update'),
+    validateBody(verifyDocumentSchema),
     async (req, res, next) => {
         try {
-            const result = await siteVisitService.updateSiteVisit(
+            const result = await documentService.verifyDocument(
                 req.organizationId,
                 req.params.id,
                 req.user.userId,

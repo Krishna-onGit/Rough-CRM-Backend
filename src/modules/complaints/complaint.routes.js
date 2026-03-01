@@ -4,11 +4,12 @@ import { requireOrganization } from '../../middleware/organization.js';
 import { requirePermission } from '../../middleware/rbac.js';
 import {
     validateBody,
-    createLeadSchema,
-    updateLeadSchema,
-    updateLeadStatusSchema,
-} from './lead.schema.js';
-import * as leadService from './lead.service.js';
+    createComplaintSchema,
+    updateComplaintSchema,
+    resolveComplaintSchema,
+    escalateComplaintSchema,
+} from './complaint.schema.js';
+import * as complaintService from './complaint.service.js';
 
 const router = Router();
 
@@ -17,10 +18,10 @@ router.use(requireOrganization);
 
 router.get(
     '/',
-    requirePermission('leads:read'),
+    requirePermission('complaints:read'),
     async (req, res, next) => {
         try {
-            const result = await leadService.listLeads(
+            const result = await complaintService.listComplaints(
                 req.organizationId,
                 req.query,
                 req.user
@@ -34,11 +35,11 @@ router.get(
 
 router.post(
     '/',
-    requirePermission('leads:create'),
-    validateBody(createLeadSchema),
+    requirePermission('complaints:create'),
+    validateBody(createComplaintSchema),
     async (req, res, next) => {
         try {
-            const result = await leadService.createLead(
+            const result = await complaintService.createComplaint(
                 req.organizationId,
                 req.user.userId,
                 req.body
@@ -52,10 +53,10 @@ router.post(
 
 router.get(
     '/:id',
-    requirePermission('leads:read'),
+    requirePermission('complaints:read'),
     async (req, res, next) => {
         try {
-            const result = await leadService.getLead(
+            const result = await complaintService.getComplaint(
                 req.organizationId,
                 req.params.id
             );
@@ -68,11 +69,11 @@ router.get(
 
 router.patch(
     '/:id',
-    requirePermission('leads:update'),
-    validateBody(updateLeadSchema),
+    requirePermission('complaints:update'),
+    validateBody(updateComplaintSchema),
     async (req, res, next) => {
         try {
-            const result = await leadService.updateLead(
+            const result = await complaintService.updateComplaint(
                 req.organizationId,
                 req.params.id,
                 req.user.userId,
@@ -85,13 +86,32 @@ router.patch(
     }
 );
 
-router.patch(
-    '/:id/status',
-    requirePermission('leads:update'),
-    validateBody(updateLeadStatusSchema),
+router.post(
+    '/:id/resolve',
+    requirePermission('complaints:update'),
+    validateBody(resolveComplaintSchema),
     async (req, res, next) => {
         try {
-            const result = await leadService.updateLeadStatus(
+            const result = await complaintService.resolveComplaint(
+                req.organizationId,
+                req.params.id,
+                req.user.userId,
+                req.body
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+router.post(
+    '/:id/escalate',
+    requirePermission('complaints:update'),
+    validateBody(escalateComplaintSchema),
+    async (req, res, next) => {
+        try {
+            const result = await complaintService.escalateComplaint(
                 req.organizationId,
                 req.params.id,
                 req.user.userId,
