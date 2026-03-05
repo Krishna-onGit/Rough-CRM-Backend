@@ -63,4 +63,23 @@ router.post(
     }
 );
 
+// PATCH /v1/bookings/:id/register
+router.patch(
+    '/:id/register',
+    requirePermission('bookings:update'),
+    async (req, res, next) => {
+        try {
+            const result = await bookingService.registerBooking(
+                req.organizationId,
+                req.params.id,
+                req.user.userId,
+                req.body
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
 export default router;

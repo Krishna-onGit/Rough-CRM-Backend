@@ -4,6 +4,10 @@ import {
     NotFoundError,
     BusinessRuleError,
 } from '../../shared/errors.js';
+import { logger } from '../../config/logger.js';
+import { triggerCascade } from '../../cascade/cascadeEngine.js';
+import { CascadeEvents } from '../../cascade/types.js';
+import { dispatchNotification } from '../../jobs/notificationDispatch.js';
 import {
     parsePagination,
     buildPaginatedResponse,
@@ -124,24 +128,67 @@ export const recordPayment = async (
     const amountPaise = rupeesToPaise(amount);
     const receiptNumber = await generateReceiptNumber(organizationId);
 
-    // Create payment record
-    const payment = await prisma.payment.create({
-        data: {
-            organizationId,
-            bookingId,
-            customerId,
-            unitId,
-            demandLetterId: demandLetterId || null,
-            receiptNumber,
-            amount: amountPaise,
-            paymentMode,
-            transactionRef: transactionRef || null,
-            paymentDate: new Date(paymentDate),
-            status: 'under_process',
-            remarks: remarks || null,
-            recordedBy: userId,
-        },
-    });
+    // ── Auto-clear instant payment modes ─────────────────────────
+    // Digital transfers settle immediately — no manual clearing needed.
+    // Cheque and demand_draft require bank clearing (manual).
+    const INSTANT_PAYMENT_MODES = ['upi', 'neft', 'rtgs', 'imps'];
+
+    const initialStatus = INSTANT_PAYMENT_MODES.includes(
+        body.paymentMode?.toLowerCase()
+    )
+        ? 'cleared'
+        : 'under_process';
+
+    // Create payment record safely handling idempotency checks
+    let payment;
+
+    try {
+        payment = await prisma.payment.create({
+            data: {
+                organizationId,
+                bookingId,
+                customerId,
+                unitId,
+                demandLetterId: demandLetterId || null,
+                receiptNumber,
+                amount: amountPaise,
+                paymentMode,
+                transactionRef: transactionRef || null,
+                paymentDate: new Date(paymentDate),
+                status: initialStatus,
+                remarks: remarks || null,
+                recordedBy: userId,
+                idempotencyKey: body.idempotencyKey || null,
+            },
+        });
+    } catch (err) {
+        // P2002 on idempotency_key = duplicate submission, return existing
+        if (
+            err.code === 'P2002' &&
+            err.meta?.target &&
+            err.meta.target.some((f) => f.includes('idempotency_key'))
+        ) {
+            const existing = await prisma.payment.findUnique({
+                where: { idempotencyKey: body.idempotencyKey },
+            });
+
+            if (existing) {
+                return buildActionResponse(
+                    {
+                        id: existing.id,
+                        receiptNumber: existing.receiptNumber,
+                        amount: paiseToRupees(existing.amount),
+                        status: existing.status,
+                        isDuplicate: true,
+                    },
+                    `Payment already recorded (idempotent retry). ` +
+                    `Receipt: ${existing.receiptNumber}.`
+                );
+            }
+        }
+        // Re-throw any other error
+        throw err;
+    }
 
     // If linked to demand letter — update paid amount
     if (demandLetterId) {
@@ -166,6 +213,14 @@ export const recordPayment = async (
         }
     }
 
+    await redis.del(
+        `analytics:dashboard:${organizationId}`
+    ).catch((err) => {
+        logger.warn('[Analytics] Cache invalidation failed', {
+            err: err.message,
+        });
+    });
+
     return buildActionResponse(
         {
             id: payment.id,
@@ -187,84 +242,97 @@ export const updatePaymentStatus = async (
     userId,
     body
 ) => {
-    const payment = await prisma.payment.findFirst({
-        where: { id: paymentId, organizationId },
-    });
-    if (!payment) throw new NotFoundError('Payment');
+    const notifications = [];
 
-    // Cannot update already cleared or refunded payments
-    if (['cleared', 'refunded'].includes(payment.status)) {
-        throw new BusinessRuleError(
-            `Payment with status "${payment.status}" cannot be modified.`
-        );
-    }
+    const result = await prisma.$transaction(async (tx) => {
 
-    // Bounce requires reason
-    if (body.status === 'bounced' && !body.bounceReason) {
-        throw new BusinessRuleError(
-            'A bounce reason is required when marking a payment as bounced.'
-        );
-    }
+        // Fetch payment inside transaction
+        const payment = await tx.payment.findFirst({
+            where: { id: paymentId, organizationId },
+        });
+        if (!payment) throw new NotFoundError('Payment');
 
-    const updateData = { ...body };
-    if (body.bounceDate) {
-        updateData.bounceDate = new Date(body.bounceDate);
-    }
+        if (payment.status === 'cleared') {
+            throw new BusinessRuleError(
+                'Payment is already cleared and cannot be updated.'
+            );
+        }
 
-    // If payment cleared and linked to demand letter
-    // ensure demand letter paid amount is already updated
-    if (
-        body.status === 'cleared' &&
-        payment.demandLetterId
-    ) {
-        // Update linked payment schedule to paid
-        await prisma.paymentSchedule.updateMany({
-            where: {
-                linkedDemandId: payment.demandLetterId,
-                status: { in: ['due', 'upcoming'] },
+        // Update payment status
+        const updated = await tx.payment.update({
+            where: { id: paymentId },
+            data: {
+                status: body.status,
+                bounceReason: body.status === 'bounced' ? body.bounceReason : null,
+                bounceDate: body.bounceDate ? new Date(body.bounceDate) : null,
             },
-            data: { status: 'paid' },
-        });
-    }
-
-    // If payment bounced and linked to demand letter
-    // reverse the paid amount update
-    if (body.status === 'bounced' && payment.demandLetterId) {
-        const demandLetter = await prisma.demandLetter.findFirst({
-            where: { id: payment.demandLetterId, organizationId },
         });
 
-        if (demandLetter) {
-            const reversedPaid = demandLetter.paidAmount - payment.amount;
-            const newPaid = reversedPaid > 0n ? reversedPaid : 0n;
-            const newRemaining = demandLetter.demandAmount - newPaid;
-
-            await prisma.demandLetter.update({
+        // If bouncing — reverse demand letter amount
+        if (body.status === 'bounced' && payment.demandLetterId) {
+            await tx.demandLetter.update({
                 where: { id: payment.demandLetterId },
                 data: {
-                    paidAmount: newPaid,
-                    remaining: newRemaining,
-                    status: newPaid === 0n
-                        ? 'pending'
-                        : 'partially_paid',
+                    paidAmount: { decrement: payment.amount },
+                    remaining: { increment: payment.amount },
+                    status: 'pending',
                 },
             });
         }
+
+        // If clearing — mark payment schedule milestone as paid (assuming payment has scheduleId if applicable, though typically demand letters handle schedules, but mimicking user code)
+        if (body.status === 'cleared' && payment.scheduleId) {
+            await tx.paymentSchedule.update({
+                where: { id: payment.scheduleId },
+                data: { status: 'paid' },
+            });
+        }
+
+        // Also handling demand letter marking for schedule as in original code
+        if (body.status === 'cleared' && payment.demandLetterId) {
+            await tx.paymentSchedule.updateMany({
+                where: {
+                    linkedDemandId: payment.demandLetterId,
+                    status: { in: ['due', 'upcoming'] },
+                },
+                data: { status: 'paid' },
+            });
+        }
+
+        // Bounce cascade — auto-create complaint
+        if (body.status === 'bounced') {
+            await triggerCascade(
+                CascadeEvents.PAYMENT_BOUNCED,
+                {
+                    paymentId,
+                    bookingId: payment.bookingId,
+                    organizationId,
+                    customerId: payment.customerId,
+                    unitId: payment.unitId,
+                    amount: payment.amount,
+                    bounceReason: body.bounceReason || null,
+                },
+                tx,
+                notifications
+            );
+        }
+
+        return updated;
+
+    }, { timeout: 15000 });
+
+    // Dispatch notifications AFTER transaction commits
+    for (const n of notifications) {
+        await dispatchNotification(n.type, n.payload).catch((err) => {
+            logger.error('[Payment] Notification dispatch failed', {
+                type: n.type,
+                err: err.message,
+            });
+        });
     }
 
-    const updated = await prisma.payment.update({
-        where: { id: paymentId },
-        data: updateData,
-    });
-
     return buildActionResponse(
-        {
-            id: updated.id,
-            receiptNumber: updated.receiptNumber,
-            previousStatus: payment.status,
-            newStatus: updated.status,
-            bounceReason: updated.bounceReason,
-        },
+        { id: result.id, status: result.status },
         `Payment status updated to "${body.status}".`
     );
 };

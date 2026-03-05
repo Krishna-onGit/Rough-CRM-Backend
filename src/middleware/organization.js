@@ -15,11 +15,12 @@ export const requireOrganization = async (req, res, next) => {
             throw new AuthorizationError('No organization context found in token.');
         }
 
-        // Set PostgreSQL session variable for RLS
-        // This scopes ALL subsequent queries in this request to the org
-        await prisma.$executeRawUnsafe(
-            `SET app.current_organization_id = '${organizationId}'`
-        );
+        // Set PostgreSQL session variable for RLS using set_config().
+        // SET command does not support parameterized values ($1), but
+        // set_config() does — this preserves the SQL injection safety
+        // of $executeRaw while remaining functionally equivalent to
+        // the original SET statement.
+        await prisma.$executeRaw`SELECT set_config('app.current_organization_id', ${organizationId}, false)`;
 
         // Attach to request for convenient access in route handlers
         req.organizationId = organizationId;

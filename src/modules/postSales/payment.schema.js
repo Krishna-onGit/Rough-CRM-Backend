@@ -13,6 +13,7 @@ export const recordPaymentSchema = z.object({
     transactionRef: z.string().max(100).optional(),
     paymentDate: z.string().datetime('Invalid date format'),
     remarks: z.string().max(500).optional(),
+    idempotencyKey: z.string().uuid().optional(),
 });
 
 export const updatePaymentStatusSchema = z.object({

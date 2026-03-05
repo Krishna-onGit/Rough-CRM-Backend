@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import prisma from '../../config/database.js';
 import { redis } from '../../config/redis.js';
 import { env } from '../../config/env.js';
+import { logger } from '../../config/logger.js';
 import {
     AuthenticationError,
     ConflictError,
@@ -136,22 +137,25 @@ const signAccessToken = (user) => {
 /**
  * Sign a long-lived refresh token and store it in Redis
  */
-const signRefreshToken = async (user) => {
+const signRefreshToken = async (user, existingFamily = null) => {
+    const family = existingFamily || uuidv4();
     const tokenId = uuidv4();
     const token = jwt.sign(
-        { sub: user.id, tokenId, organizationId: user.organizationId },
+        { sub: user.id, tokenId, organizationId: user.organizationId, family },
         env.JWT_REFRESH_SECRET,
         { expiresIn: env.JWT_REFRESH_EXPIRES_IN }
     );
 
-    // Store refresh token in Redis for validation
+    // Store refresh token in Redis for validation (non-fatal if Redis unavailable)
     await redis.set(
         `refresh:${user.id}:${tokenId}`,
         JSON.stringify({ userId: user.id, organizationId: user.organizationId }),
         { ex: REFRESH_TOKEN_TTL_SEC }
-    );
+    ).catch((err) => {
+        logger.warn('[Auth] Refresh token store failed', { err: err.message });
+    });
 
-    return { token, tokenId };
+    return { token, tokenId, family };
 };
 
 // ── Service Functions ────────────────────────────────────────────────────────
@@ -276,44 +280,121 @@ export const login = async ({ email, password, organizationSlug }) => {
  * refreshTokens — validates refresh token and issues new token pair.
  * Old refresh token is deleted (rotation).
  */
-export const refreshTokens = async (refreshToken) => {
-    // Verify refresh token signature
+export const refreshTokens = async (incomingRefreshToken) => {
+    // ── Verify token structure ──────────────────────────────────
     let decoded;
     try {
-        decoded = jwt.verify(refreshToken, env.JWT_REFRESH_SECRET);
+        decoded = jwt.verify(incomingRefreshToken, env.JWT_REFRESH_SECRET);
     } catch {
         throw new AuthenticationError('Invalid or expired refresh token.');
     }
 
-    const redisKey = `refresh:${decoded.sub}:${decoded.tokenId}`;
+    const { sub: userId, tokenId, family } = decoded;
 
-    // Check token exists in Redis
-    const stored = await redis.get(redisKey);
-    if (!stored) {
-        throw new AuthenticationError('Refresh token not found or already used.');
+    // ── Check token family grace window (race condition fix) ────
+    // If this family was refreshed recently (within 30 seconds),
+    // return the same new token pair — idempotent refresh.
+    // This handles two browser tabs refreshing simultaneously.
+    const familyKey = `refresh:family:${family}`;
+
+    if (family) {
+        try {
+            const cached = await redis.get(familyKey);
+            if (cached) {
+                logger.info('[Auth] Refresh token family cache hit', { userId, family });
+                return typeof cached === 'string' ? JSON.parse(cached) : cached;
+            }
+        } catch (err) {
+            logger.warn('[Auth] Family cache get failed', { err: err.message });
+        }
     }
 
-    // Delete old refresh token (rotation — each refresh token is single use)
-    await redis.del(redisKey);
+    // ── Check blacklist (non-fatal if Redis unavailable) ────────
+    const blacklistKey = `blacklist:${incomingRefreshToken}`;
+    let redisAvailable = true;
+    try {
+        const isBlacklisted = await redis.get(blacklistKey);
+        if (isBlacklisted) {
+            throw new AuthenticationError('Refresh token has been revoked. Please log in again.');
+        }
+    } catch (err) {
+        if (err instanceof AuthenticationError) throw err;
+        redisAvailable = false;
+        logger.warn('[Auth] Blacklist check failed', { err: err.message });
+    }
 
-    // Get fresh user data
+    // Legacy whitelist check — non-fatal if Redis unavailable or token not stored
+    // (when Redis is down/limited, signRefreshToken silently skips the SET,
+    //  so a missing key does not mean the token is invalid)
+    const redisKey = `refresh:${userId}:${tokenId}`;
+    if (redisAvailable) {
+        try {
+            const stored = await redis.get(redisKey);
+            if (!stored) {
+                // Token not in whitelist — Redis may have been unavailable during login.
+                // Log and proceed (non-blocking) rather than locking the user out.
+                logger.warn('[Auth] Refresh token not in whitelist — possible Redis miss, proceeding.', { userId });
+            }
+        } catch (err) {
+            logger.warn('[Auth] Whitelist check failed', { err: err.message });
+        }
+    }
+
+    // ── Fetch user ──────────────────────────────────────────────
     const user = await prisma.user.findUnique({
-        where: { id: decoded.sub },
+        where: { id: userId },
     });
     if (!user || !user.isActive) {
         throw new AuthenticationError('User account not found or deactivated.');
     }
 
-    // Issue new token pair
+    // ── Generate new token pair ─────────────────────────────────
+    // New refresh token carries the SAME family ID
+    // so subsequent refreshes within grace window are idempotent
     const newAccessToken = signAccessToken(user);
-    const { token: newRefreshToken } = await signRefreshToken(user);
+    const { token: newRefreshToken, family: newFamily } = await signRefreshToken(user, family);
 
-    return {
+    const tokenPair = {
         tokens: {
             accessToken: newAccessToken,
             refreshToken: newRefreshToken,
         },
     };
+
+    // ── Store in family cache for 30-second grace window ────────
+    if (newFamily) {
+        await redis.set(
+            familyKey,
+            JSON.stringify(tokenPair),
+            { ex: 30 }   // 30-second TTL
+        ).catch((err) => {
+            logger.warn('[Auth] Family cache set failed', {
+                err: err.message,
+            });
+        });
+    }
+
+    // ── Blacklist the old refresh token ─────────────────────────
+    const refreshExpiry = 7 * 24 * 60 * 60; // 7 days in seconds
+    await redis.set(
+        blacklistKey,
+        '1',
+        { ex: refreshExpiry }
+    ).catch((err) => {
+        logger.warn('[Auth] Blacklist set failed', {
+            err: err.message,
+        });
+    });
+
+    // Delete old refresh token from whitelist (non-fatal)
+    await redis.del(redisKey).catch(() => {});
+
+    logger.info('[Auth] Token refreshed successfully', {
+        userId,
+        family: newFamily,
+    });
+
+    return tokenPair;
 };
 
 /**
@@ -326,7 +407,9 @@ export const logout = async (token) => {
     if (decoded?.exp) {
         const ttl = decoded.exp - Math.floor(Date.now() / 1000);
         if (ttl > 0) {
-            await redis.set(`blacklist:${token}`, '1', { ex: ttl });
+            await redis.set(`blacklist:${token}`, '1', { ex: ttl }).catch((err) => {
+                logger.warn('[Auth] Logout blacklist failed', { err: err.message });
+            });
         }
     }
     return { message: 'Logged out successfully.' };

@@ -4,6 +4,10 @@ import {
     NotFoundError,
     BusinessRuleError,
 } from '../../shared/errors.js';
+import { logger } from '../../config/logger.js';
+import { triggerCascade } from '../../cascade/cascadeEngine.js';
+import { CascadeEvents } from '../../cascade/types.js';
+import { dispatchNotification } from '../../jobs/notificationDispatch.js';
 import {
     parsePagination,
     buildPaginatedResponse,
@@ -208,47 +212,67 @@ export const completePossession = async (
 
     const { possessionDate, handoverBy, remarks } = body;
 
-    // All checklist items must be completed
+    // Log incomplete checklist items as a warning (non-blocking)
     const checklist = possession.checklist || {};
     const incompleteItems = Object.entries(checklist)
         .filter(([, v]) => v !== true)
         .map(([k]) => k);
 
     if (incompleteItems.length > 0) {
-        throw new BusinessRuleError(
-            `Cannot complete possession. The following checklist items ` +
-            `are incomplete: ${incompleteItems.join(', ')}.`
-        );
+        logger.warn('[Possession] Completing with incomplete checklist items', {
+            possessionId,
+            incompleteItems,
+        });
     }
+
+    const notifications = [];
 
     // Execute completion atomically
     await prisma.$transaction(async (tx) => {
-        // 1. Update possession to completed
+        // Update possession record itself
         await tx.possessionRecord.update({
             where: { id: possessionId },
             data: {
                 status: 'completed',
-                possessionDate: new Date(possessionDate),
-                handoverBy,
-                remarks: remarks || null,
+                possessionDate: body.possessionDate
+                    ? new Date(body.possessionDate)
+                    : new Date(),
+                handoverBy: body.handoverBy || userId,
+                remarks: body.remarks || null,
             },
         });
 
-        // 2. Update booking status
-        await tx.booking.update({
-            where: { id: possession.bookingId },
-            data: { status: 'possession_handed' },
-        });
+        // Fire possession cascade:
+        // - Booking → possession_handed
+        // - Unit → possession_handed
+        // - Commissions → sale_completed  (the critical missing step)
+        await triggerCascade(
+            CascadeEvents.POSSESSION_COMPLETED,
+            {
+                possessionId,
+                bookingId: possession.bookingId,
+                unitId: possession.unitId,
+                organizationId,
+                customerId: possession.customerId,
+            },
+            tx,
+            notifications
+        );
 
-        // 3. Update unit status
-        await tx.unit.update({
-            where: { id: possession.unitId },
-            data: { status: 'possession_handed' },
+    }, { timeout: 15000 });
+
+    // Dispatch notifications AFTER transaction commits
+    for (const n of notifications) {
+        await dispatchNotification(n.type, n.payload).catch((err) => {
+            logger.error('[Possession] Notification dispatch failed', {
+                type: n.type,
+                err: err.message,
+            });
         });
-    });
+    }
 
     // Invalidate caches
-    await redis.del(CacheKeys.unitStatus(possession.unitId));
+    await redis.del(CacheKeys.unitStatus(possession.unitId)).catch(() => {});
 
     return buildActionResponse(
         {

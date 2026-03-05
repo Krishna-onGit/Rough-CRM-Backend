@@ -1,13 +1,9 @@
 import { Router } from 'express';
-import { authRateLimiter } from '../../middleware/rateLimit.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { validateBody, registerSchema, loginSchema, refreshSchema } from './auth.schema.js';
 import * as authService from './auth.service.js';
 
 const router = Router();
-
-// Apply strict rate limiting to ALL auth routes
-router.use(authRateLimiter);
 
 /**
  * POST /v1/auth/register

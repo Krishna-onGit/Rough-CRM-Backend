@@ -5,6 +5,10 @@ import {
     BusinessRuleError,
     ConflictError,
 } from '../../shared/errors.js';
+import { logger } from '../../config/logger.js';
+import { triggerCascade } from '../../cascade/cascadeEngine.js';
+import { CascadeEvents } from '../../cascade/types.js';
+import { dispatchNotification } from '../../jobs/notificationDispatch.js';
 import {
     parsePagination,
     buildPaginatedResponse,
@@ -259,7 +263,9 @@ export const processCancellation = async (
     organizationId,
     cancellationId,
     userId,
-    body
+    body,
+    existingTx = null,
+    notificationsToDispatch = []
 ) => {
     const cancellation = await prisma.cancellationRecord.findFirst({
         where: { id: cancellationId, organizationId },
@@ -304,9 +310,10 @@ export const processCancellation = async (
             ? cancellation.totalReceived - totalDeductions
             : 0n;
 
-    // Execute cancellation atomically
-    await prisma.$transaction(async (tx) => {
-        // 1. Update cancellation record
+    // If an external tx was passed (called from approval), use it.
+    // Otherwise open a new $transaction (called directly from route).
+    const runInTransaction = async (tx) => {
+        // 1. Mark cancellation record as approved
         await tx.cancellationRecord.update({
             where: { id: cancellationId },
             data: {
@@ -322,62 +329,54 @@ export const processCancellation = async (
             },
         });
 
-        // 2. Update booking status to cancelled
-        await tx.booking.update({
-            where: { id: cancellation.bookingId },
-            data: { status: 'cancelled' },
-        });
-
-        // 3. Release unit back to available
-        await tx.unit.update({
-            where: { id: cancellation.unitId },
-            data: {
-                status: 'available',
-                customerId: null,
-                salesPersonId: null,
-                agentId: null,
-                bookingId: null,
-                saleDate: null,
-                finalSaleValue: null,
-                discountAmount: null,
-                discountApprovedBy: null,
-                blockedBy: null,
-                blockedAt: null,
-                blockExpiresAt: null,
-                blockAgentId: null,
-            },
-        });
-
-        // 4. Update commission to cancelled
-        await tx.commission.updateMany({
-            where: {
+        // 2. Fire the full cancellation cascade
+        await triggerCascade(
+            CascadeEvents.UNIT_CANCELLED,
+            {
                 bookingId: cancellation.bookingId,
+                unitId: cancellation.unitId,
                 organizationId,
+                customerId: cancellation.customerId,
+                projectId: cancellation.booking.projectId,
             },
-            data: { status: 'cancelled' },
-        });
+            tx,
+            notificationsToDispatch  // cascade queues here, we dispatch after commit
+        );
+    };
 
-        // 5. Update approval request to approved
-        await tx.approvalRequest.updateMany({
-            where: {
-                entityId: cancellationId,
-                organizationId,
-                status: 'pending',
-            },
-            data: {
-                status: 'approved',
-                reviewedBy: approvedBy,
-                reviewedAt: new Date(),
-                reviewRemarks: remarks || null,
-            },
+    if (existingTx) {
+        // Use the incoming transaction (called from approval.service.js)
+        await runInTransaction(existingTx);
+    } else {
+        // Open a new transaction (called directly from cancellation route)
+        const localNotifications = [];
+        await prisma.$transaction(
+            (tx) => runInTransaction(tx),
+            { timeout: 30000 }
+        );
+        // Dispatch only if we own the transaction
+        for (const n of localNotifications) {
+            await dispatchNotification(n.type, n.payload).catch((err) => {
+                logger.error('[Cancellation] Notification failed', {
+                    type: n.type, err: err.message,
+                });
+            });
+        }
+    }
+
+    await redis.del(
+        `analytics:dashboard:${organizationId}`
+    ).catch((err) => {
+        logger.warn('[Analytics] Cache invalidation failed', {
+            err: err.message,
         });
     });
 
     // Invalidate caches
-    await redis.del(CacheKeys.unitStatus(cancellation.unitId));
+    await redis.del(CacheKeys.unitStatus(cancellation.unitId)).catch(() => {});
     await redis.del(
         CacheKeys.projectStats(cancellation.booking.projectId)
-    );
+    ).catch(() => {});
 
     return buildActionResponse(
         {

@@ -1,45 +1,68 @@
-// ── Cascade Engine ───────────────────────────────────────────────────────────
-// Central event dispatcher. Routes cascade events to their handlers.
-// All handlers receive the Prisma transaction context so everything
-// stays atomic — all or nothing.
-
 import { onBookingCreated } from './handlers/onBookingCreated.js';
+import { onUnitCancelled } from './handlers/onUnitCancelled.js';
+import { onPaymentBounced } from './handlers/onPaymentBounced.js';
+import { onTransferInitiated } from './handlers/onTransferInitiated.js';
+import { onPossessionCompleted } from './handlers/onPossessionCompleted.js';
+import { onRegistrationCompleted } from './handlers/onRegistrationCompleted.js';
 import { CascadeEvents } from './types.js';
+import { logger } from '../config/logger.js';
 
 /**
- * triggerCascade — dispatches a cascade event to its handler.
- * Must be called INSIDE a prisma.$transaction block.
+ * triggerCascade — Central cascade dispatcher.
  *
- * @param {string} event - CascadeEvents constant
- * @param {Object} payload - Event data
- * @param {Object} tx - Prisma transaction client
+ * DESIGN CONTRACT:
+ * - All handlers run inside the caller's transaction (tx).
+ * - Notifications are collected in notificationsToDispatch array.
+ * - The caller dispatches notifications AFTER the transaction commits.
+ * - Handlers never dispatch notifications directly.
+ *
+ * @param {string} event    — CascadeEvents constant
+ * @param {Object} payload  — event-specific data
+ * @param {Object} tx       — Prisma transaction client from caller
+ * @param {Array}  notificationsToDispatch — caller-owned array
  */
-export const triggerCascade = async (event, payload, tx) => {
+export const triggerCascade = async (
+    event,
+    payload,
+    tx,
+    notificationsToDispatch = []
+) => {
+    logger.info(`[Cascade] Triggering: ${event}`, {
+        bookingId: payload.bookingId,
+        unitId: payload.unitId,
+    });
+
     switch (event) {
         case CascadeEvents.BOOKING_CREATED:
             return await onBookingCreated(payload, tx);
 
         case CascadeEvents.UNIT_CANCELLED:
-            // Handler implemented in Phase 7
-            console.log('[Cascade] UNIT_CANCELLED queued:', payload.bookingId);
-            return;
+            return await onUnitCancelled(
+                payload, tx, notificationsToDispatch
+            );
 
         case CascadeEvents.PAYMENT_BOUNCED:
-            // Handler implemented in Phase 7
-            console.log('[Cascade] PAYMENT_BOUNCED queued:', payload.paymentId);
-            return;
+            return await onPaymentBounced(
+                payload, tx, notificationsToDispatch
+            );
 
         case CascadeEvents.TRANSFER_INITIATED:
-            // Handler implemented in Phase 7
-            console.log('[Cascade] TRANSFER_INITIATED queued:', payload.transferId);
-            return;
+            return await onTransferInitiated(
+                payload, tx, notificationsToDispatch
+            );
 
         case CascadeEvents.POSSESSION_COMPLETED:
-            // Handler implemented in Phase 7
-            console.log('[Cascade] POSSESSION_COMPLETED queued:', payload.possessionId);
-            return;
+            return await onPossessionCompleted(
+                payload, tx, notificationsToDispatch
+            );
+
+        case CascadeEvents.REGISTRATION_COMPLETED:
+            return await onRegistrationCompleted(
+                payload, tx, notificationsToDispatch
+            );
 
         default:
-            console.warn(`[Cascade] Unknown event: ${event}`);
+            logger.warn(`[Cascade] Unknown event: ${event}`, { payload });
+            return null;
     }
 };

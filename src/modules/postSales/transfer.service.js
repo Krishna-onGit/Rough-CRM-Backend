@@ -4,6 +4,10 @@ import {
     BusinessRuleError,
     ConflictError,
 } from '../../shared/errors.js';
+import { logger } from '../../config/logger.js';
+import { triggerCascade } from '../../cascade/cascadeEngine.js';
+import { CascadeEvents } from '../../cascade/types.js';
+import { dispatchNotification } from '../../jobs/notificationDispatch.js';
 import {
     parsePagination,
     buildPaginatedResponse,
@@ -137,6 +141,23 @@ export const initiateTransfer = async (
     });
     const transferCode = `TRF-${String(count + 1).padStart(4, '0')}`;
 
+    // ── NOC document verification ────────────────────────────────────────────
+    // Verify the NOC document exists in this organization with category='noc'
+    const nocDoc = await prisma.customerDocument.findFirst({
+        where: {
+            id: body.nocDocumentId,
+            organizationId,
+            category: 'noc',
+        },
+    });
+
+    if (!nocDoc) {
+        throw new BusinessRuleError(
+            'A NOC document with category "noc" is required to initiate a transfer. ' +
+            'Upload the NOC via /v1/documents before proceeding.'
+        );
+    }
+
     const transferFeePaise = rupeesToPaise(transferFee || 0);
 
     // Create transfer record + approval request atomically
@@ -149,6 +170,7 @@ export const initiateTransfer = async (
                 transferCode,
                 fromCustomerId: booking.customerId,
                 toCustomerId,
+                nocDocumentId: body.nocDocumentId,
                 transferFee: transferFeePaise,
                 status: 'pending_approval',
                 requestedBy: userId,
@@ -199,7 +221,9 @@ export const processTransfer = async (
     organizationId,
     transferId,
     userId,
-    body
+    body,
+    existingTx = null,
+    notificationsToDispatch = []
 ) => {
     const transfer = await prisma.transferRecord.findFirst({
         where: { id: transferId, organizationId },
@@ -214,53 +238,53 @@ export const processTransfer = async (
 
     const { approvedBy, remarks } = body;
 
-    await prisma.$transaction(async (tx) => {
-        // 1. Update transfer to executed
+    const runInTransaction = async (tx) => {
+        // 1. Mark transfer as executed
         await tx.transferRecord.update({
             where: { id: transferId },
             data: {
                 status: 'executed',
-                approvedBy,
+                approvedBy: approvedBy || userId,
                 transferDate: new Date(),
+                remarks: remarks || null,
             },
         });
 
-        // 2. Update booking — change customer
-        await tx.booking.update({
-            where: { id: transfer.bookingId },
-            data: { customerId: transfer.toCustomerId },
-        });
-
-        // 3. Update unit — change customer
-        await tx.unit.update({
-            where: { id: transfer.unitId },
-            data: { customerId: transfer.toCustomerId },
-        });
-
-        // 4. Update possession record if exists
-        await tx.possessionRecord.updateMany({
-            where: {
+        // 2. Fire full ownership migration cascade
+        await triggerCascade(
+            CascadeEvents.TRANSFER_INITIATED,
+            {
+                transferId,
                 bookingId: transfer.bookingId,
+                unitId: transfer.unitId,
                 organizationId,
+                fromCustomerId: transfer.fromCustomerId,
+                toCustomerId: transfer.toCustomerId,
             },
-            data: { customerId: transfer.toCustomerId },
-        });
+            tx,
+            notificationsToDispatch
+        );
+    };
 
-        // 5. Approve the approval request
-        await tx.approvalRequest.updateMany({
-            where: {
-                entityId: transferId,
-                organizationId,
-                status: 'pending',
-            },
-            data: {
-                status: 'approved',
-                reviewedBy: approvedBy,
-                reviewedAt: new Date(),
-                reviewRemarks: remarks || null,
-            },
-        });
-    });
+    if (existingTx) {
+        // Use the incoming transaction (called from approval.service.js)
+        await runInTransaction(existingTx);
+    } else {
+        // Open a new transaction (called directly from route)
+        const localNotifications = [];
+        await prisma.$transaction(
+            (tx) => runInTransaction(tx),
+            { timeout: 30000 }
+        );
+        // Dispatch only if we own the transaction
+        for (const n of localNotifications) {
+            await dispatchNotification(n.type, n.payload).catch((err) => {
+                logger.error('[Transfer] Notification failed', {
+                    type: n.type, err: err.message,
+                });
+            });
+        }
+    }
 
     return buildActionResponse(
         {

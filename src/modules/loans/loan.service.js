@@ -56,28 +56,33 @@ export const listLoans = async (organizationId, query = {}) => {
                 id: true,
                 bookingId: true,
                 customerId: true,
-                unitId: true,
                 bankName: true,
-                loanAccountNumber: true,
+                loanAmount: true,
                 sanctionedAmount: true,
-                disbursedAmount: true,
                 interestRate: true,
                 tenureMonths: true,
-                emiAmount: true,
                 status: true,
+                disbursements: true,
+                sanctionDate: true,
                 createdAt: true,
             },
         }),
         prisma.loanRecord.count({ where }),
     ]);
 
-    const formatted = loans.map((l) => ({
-        ...l,
-        interestRate: Number(l.interestRate),
-        sanctionedAmount: paiseToRupees(l.sanctionedAmount),
-        disbursedAmount: paiseToRupees(l.disbursedAmount),
-        emiAmount: l.emiAmount ? paiseToRupees(l.emiAmount) : null,
-    }));
+    const formatted = loans.map((l) => {
+        const disbursements = Array.isArray(l.disbursements) ? l.disbursements : [];
+        const disbursedPaise = disbursements.reduce(
+            (sum, d) => sum + BigInt(d.amount || 0), 0n
+        );
+        return {
+            ...l,
+            interestRate: Number(l.interestRate),
+            loanAmount: paiseToRupees(l.loanAmount),
+            sanctionedAmount: paiseToRupees(l.sanctionedAmount),
+            disbursedAmount: paiseToRupees(disbursedPaise),
+        };
+    });
 
     return buildPaginatedResponse(formatted, total, page, pageSize);
 };
@@ -91,26 +96,22 @@ export const getLoan = async (organizationId, loanId) => {
     if (!loan) throw new NotFoundError('Loan record');
 
     const sanctioned = loan.sanctionedAmount;
-    const disbursed = loan.disbursedAmount;
+    const disbursements = Array.isArray(loan.disbursements) ? loan.disbursements : [];
+    const disbursed = disbursements.reduce(
+        (sum, d) => sum + BigInt(d.amount || 0), 0n
+    );
     const remaining = sanctioned - disbursed;
 
     return buildSingleResponse({
         ...loan,
         interestRate: Number(loan.interestRate),
+        loanAmount: paiseToRupees(loan.loanAmount),
         sanctionedAmount: paiseToRupees(sanctioned),
         disbursedAmount: paiseToRupees(disbursed),
-        remainingToDisbursе: paiseToRupees(
-            remaining > 0n ? remaining : 0n
-        ),
-        emiAmount: loan.emiAmount
-            ? paiseToRupees(loan.emiAmount)
-            : null,
-        disbursementPct:
-            sanctioned > 0n
-                ? Math.round(
-                    (Number(disbursed) / Number(sanctioned)) * 100
-                )
-                : 0,
+        remainingToDisbursе: paiseToRupees(remaining > 0n ? remaining : 0n),
+        disbursementPct: sanctioned > 0n
+            ? Math.round((Number(disbursed) / Number(sanctioned)) * 100)
+            : 0,
     });
 };
 
@@ -124,12 +125,16 @@ export const createLoan = async (
     const {
         bookingId,
         customerId,
-        unitId,
+        bankName,
         sanctionedAmount,
         interestRate,
         tenureMonths,
+        sanctionDate,
+        remarks,
         emiAmount,
-        ...rest
+        // Discard fields not in the LoanRecord schema
+        // (unitId, loanAccountNumber, branchName, loanOfficer, loanOfficerMobile
+        //  are sent by API clients but don't map to DB columns)
     } = body;
 
     // Verify booking exists
@@ -147,7 +152,7 @@ export const createLoan = async (
         where: {
             bookingId,
             organizationId,
-            status: { notIn: ['rejected', 'closed'] },
+            status: { notIn: ['rejected'] },
         },
     });
     if (existingLoan) {
@@ -179,16 +184,16 @@ export const createLoan = async (
 
     const loan = await prisma.loanRecord.create({
         data: {
-            ...rest,
             organizationId,
             bookingId,
             customerId,
-            unitId,
+            bankName,
+            loanAmount: sanctionedPaise,
             sanctionedAmount: sanctionedPaise,
-            disbursedAmount: 0n,
             interestRate,
             tenureMonths,
-            emiAmount: calculatedEmi,
+            sanctionDate: sanctionDate || null,
+            remarks: remarks || null,
             status: 'applied',
             disbursements: [],
         },
@@ -221,15 +226,21 @@ export const updateLoan = async (
     });
     if (!loan) throw new NotFoundError('Loan record');
 
-    if (['rejected', 'closed'].includes(loan.status)) {
+    if (loan.status === 'rejected') {
         throw new BusinessRuleError(
             `Loan is already "${loan.status}" and cannot be updated.`
         );
     }
 
+    // Only update fields that exist in the LoanRecord schema
+    const { bankName, remarks, sanctionDate } = body;
     const updated = await prisma.loanRecord.update({
         where: { id: loanId },
-        data: body,
+        data: {
+            ...(bankName !== undefined && { bankName }),
+            ...(remarks !== undefined && { remarks }),
+            ...(sanctionDate !== undefined && { sanctionDate }),
+        },
     });
 
     return buildActionResponse(
@@ -255,7 +266,7 @@ export const recordDisbursement = async (
     });
     if (!loan) throw new NotFoundError('Loan record');
 
-    if (['rejected', 'closed'].includes(loan.status)) {
+    if (loan.status === 'rejected') {
         throw new BusinessRuleError(
             `Cannot record disbursement for a ${loan.status} loan.`
         );
@@ -264,23 +275,26 @@ export const recordDisbursement = async (
     const { amount, disbursementDate, transactionRef, remarks } = body;
     const amountPaise = rupeesToPaise(amount);
 
+    // Compute already-disbursed total from JSONB array (no disbursedAmount column in schema)
+    const existingDisbursements = Array.isArray(loan.disbursements)
+        ? loan.disbursements
+        : [];
+    const alreadyDisbursed = existingDisbursements.reduce(
+        (sum, d) => sum + BigInt(d.amount || 0), 0n
+    );
+
     // Check disbursement does not exceed sanctioned amount
-    const newDisbursed = loan.disbursedAmount + amountPaise;
+    const newDisbursed = alreadyDisbursed + amountPaise;
     if (newDisbursed > loan.sanctionedAmount) {
         throw new BusinessRuleError(
             `Total disbursed amount would exceed sanctioned amount. ` +
             `Remaining: ₹${paiseToRupees(
-                loan.sanctionedAmount - loan.disbursedAmount
+                loan.sanctionedAmount - alreadyDisbursed
             ).toLocaleString('en-IN')}.`
         );
     }
 
     const isFullyDisbursed = newDisbursed >= loan.sanctionedAmount;
-
-    // Append to disbursements JSONB array
-    const existingDisbursements = Array.isArray(loan.disbursements)
-        ? loan.disbursements
-        : [];
 
     const newDisbursement = {
         amount: Number(amountPaise),
@@ -294,12 +308,8 @@ export const recordDisbursement = async (
     await prisma.loanRecord.update({
         where: { id: loanId },
         data: {
-            disbursedAmount: newDisbursed,
-            disbursements: [
-                ...existingDisbursements,
-                newDisbursement,
-            ],
-            status: isFullyDisbursed ? 'disbursed' : 'sanctioned',
+            disbursements: [...existingDisbursements, newDisbursement],
+            status: isFullyDisbursed ? 'fully_disbursed' : 'disbursing',
         },
     });
 
@@ -308,10 +318,8 @@ export const recordDisbursement = async (
             loanId,
             disbursedAmount: paiseToRupees(amountPaise),
             totalDisbursed: paiseToRupees(newDisbursed),
-            remainingToDisbursе: paiseToRupees(
-                loan.sanctionedAmount - newDisbursed
-            ),
-            loanStatus: isFullyDisbursed ? 'disbursed' : 'sanctioned',
+            remainingToDisbursе: paiseToRupees(loan.sanctionedAmount - newDisbursed),
+            loanStatus: isFullyDisbursed ? 'fully_disbursed' : 'disbursing',
             fullyDisbursed: isFullyDisbursed,
         },
         `Disbursement of ₹${amount.toLocaleString('en-IN')} recorded. ` +
@@ -337,7 +345,7 @@ export const updateLoanStatus = async (
     });
     if (!loan) throw new NotFoundError('Loan record');
 
-    if (['rejected', 'closed'].includes(loan.status)) {
+    if (loan.status === 'rejected') {
         throw new BusinessRuleError(
             `Loan is already "${loan.status}" and cannot be updated.`
         );

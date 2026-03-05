@@ -1,5 +1,6 @@
 import prisma from '../../config/database.js';
 import { redis, CacheKeys, CacheTTL } from '../../config/redis.js';
+import { logger } from '../../config/logger.js';
 import {
     NotFoundError,
     BusinessRuleError,
@@ -24,6 +25,85 @@ import {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const BLOCK_EXPIRY_HOURS = 48;
+
+/**
+ * getSpBlockCount — fetches active block count for a SP.
+ * Primary source: Redis INCR counter.
+ * Fallback (Redis unavailable): DB count query.
+ *
+ * @param {string} organizationId
+ * @param {string} salesPersonId
+ * @returns {number}
+ */
+const getSpBlockCount = async (organizationId, salesPersonId) => {
+    const redisKey = `sp:blocks:${organizationId}:${salesPersonId}`;
+
+    try {
+        const cached = await redis.get(redisKey);
+        if (cached !== null) return parseInt(cached, 10);
+    } catch {
+        // Redis unavailable — fall through to DB
+        logger.warn('[BlockLimit] Redis unavailable, falling back to DB count', {
+            salesPersonId,
+        });
+    }
+
+    // DB fallback: count active blocks
+    return prisma.unit.count({
+        where: {
+            organizationId,
+            blockedBy: salesPersonId,
+            status: 'blocked',
+        },
+    });
+};
+
+/**
+ * incrementSpBlockCounter — atomically increments Redis counter.
+ * Sets TTL of 48 hours on first increment.
+ * Safe to call even if Redis is temporarily unavailable.
+ */
+const incrementSpBlockCounter = async (
+    organizationId,
+    salesPersonId
+) => {
+    const redisKey = `sp:blocks:${organizationId}:${salesPersonId}`;
+    try {
+        await redis.incr(redisKey);
+        // Set TTL only if not already set (first block for this SP)
+        const ttl = await redis.ttl(redisKey);
+        if (ttl === -1) {
+            await redis.expire(redisKey, BLOCK_EXPIRY_HOURS * 60 * 60); // 48h
+        }
+    } catch {
+        logger.warn('[BlockLimit] Redis counter increment failed', {
+            salesPersonId,
+        });
+        // Non-fatal — DB is source of truth, Redis is optimization
+    }
+};
+
+/**
+ * decrementSpBlockCounter — decrements Redis counter on release.
+ * Called when a block is released or converted to booking.
+ */
+export const decrementSpBlockCounter = async (
+    organizationId,
+    salesPersonId
+) => {
+    if (!salesPersonId) return;
+    const redisKey = `sp:blocks:${organizationId}:${salesPersonId}`;
+    try {
+        const current = await redis.get(redisKey);
+        if (current !== null && parseInt(current, 10) > 0) {
+            await redis.decr(redisKey);
+        }
+    } catch {
+        logger.warn('[BlockLimit] Redis counter decrement failed', {
+            salesPersonId,
+        });
+    }
+};
 
 const formatUnit = (unit) => ({
     ...unit,
@@ -95,13 +175,57 @@ export const listUnits = async (organizationId, query = {}) => {
         superBuiltUpArea: Number(u.superBuiltUpArea) / 100,
     }));
 
+    // ── Lazy expiry pass on listed units ─────────────────────────────────────
+    const now = new Date();
+    const expiredUnitIds = formatted
+        .filter(
+            (u) =>
+                u.status === 'blocked' &&
+                u.blockExpiresAt &&
+                new Date(u.blockExpiresAt) < now
+        )
+        .map((u) => u.id);
+
+    if (expiredUnitIds.length > 0) {
+        logger.info('[LazyExpiry] Releasing expired blocks in list', {
+            count: expiredUnitIds.length,
+        });
+
+        // Fire-and-forget bulk release — do not block the response
+        prisma.unit
+            .updateMany({
+                where: { id: { in: expiredUnitIds }, organizationId },
+                data: {
+                    status: 'available',
+                    blockedBy: null,
+                    blockedAt: null,
+                    blockExpiresAt: null,
+                    blockAgentId: null,
+                },
+            })
+            .catch((err) =>
+                logger.error('[LazyExpiry] Bulk release failed', {
+                    err: err.message,
+                })
+            );
+
+        // Update in-memory result so caller sees correct status now
+        expiredUnitIds.forEach((id) => {
+            const index = formatted.findIndex((u) => u.id === id);
+            if (index !== -1) {
+                formatted[index].status = 'available';
+                formatted[index].blockedBy = null;
+            }
+        });
+    }
+
     return buildPaginatedResponse(formatted, total, page, pageSize);
 };
 
 // ── Get Single Unit with Full Cost Sheet ─────────────────────────────────────
 
 export const getUnit = async (organizationId, unitId) => {
-    const unit = await prisma.unit.findFirst({
+    let unit = await prisma.unit.findFirst({
         where: { id: unitId, organizationId },
         include: {
             project: { select: { name: true, projectCode: true, settings: true } },
@@ -109,6 +233,41 @@ export const getUnit = async (organizationId, unitId) => {
         },
     });
     if (!unit) throw new NotFoundError('Unit');
+
+    // ── Lazy expiry: release expired blocks inline ────────────────────────────
+    // Fallback for when Redis/BullMQ job is unavailable.
+    // If a unit is blocked but its expiry has passed, release it
+    // before returning so callers never see stale 'blocked' status.
+    if (
+        unit &&
+        unit.status === 'blocked' &&
+        unit.blockExpiresAt &&
+        new Date() > new Date(unit.blockExpiresAt)
+    ) {
+        logger.info('[LazyExpiry] Releasing expired block inline', {
+            unitId: unit.id,
+            blockedBy: unit.blockedBy,
+            blockExpiresAt: unit.blockExpiresAt,
+        });
+
+        // Decrement counter for the SP whose block expired
+        await decrementSpBlockCounter(organizationId, unit.blockedBy);
+
+        unit = await prisma.unit.update({
+            where: { id: unit.id },
+            data: {
+                status: 'available',
+                blockedBy: null,
+                blockedAt: null,
+                blockExpiresAt: null,
+                blockAgentId: null,
+            },
+            include: {
+                project: { select: { name: true, projectCode: true, settings: true } },
+                tower: { select: { name: true } },
+            },
+        });
+    }
 
     // Recalculate cost sheet for display
     const costSheet = calculateUnitCost({
@@ -150,6 +309,22 @@ export const blockUnit = async (organizationId, unitId, userId, body) => {
     });
     if (!salesPerson) throw new NotFoundError('Sales person');
 
+    // ── 3-block limit enforcement ─────────────────────────────────────────────
+    const MAX_ACTIVE_BLOCKS = 3;
+
+    const currentBlockCount = await getSpBlockCount(
+        organizationId,
+        body.salesPersonId
+    );
+
+    if (currentBlockCount >= MAX_ACTIVE_BLOCKS) {
+        throw new BusinessRuleError(
+            `Sales person has reached the maximum of ${MAX_ACTIVE_BLOCKS} ` +
+            `active blocks. Release or convert an existing block to a ` +
+            `booking before blocking another unit.`
+        );
+    }
+
     const blockedAt = new Date();
     const blockExpiresAt = new Date(
         blockedAt.getTime() + BLOCK_EXPIRY_HOURS * 60 * 60 * 1000
@@ -167,8 +342,11 @@ export const blockUnit = async (organizationId, unitId, userId, body) => {
         },
     });
 
-    // Invalidate unit status cache
-    await redis.del(CacheKeys.unitStatus(unitId));
+    // Increment Redis counter after successful DB write
+    await incrementSpBlockCounter(organizationId, body.salesPersonId);
+
+    // Invalidate unit status cache (non-fatal)
+    await redis.del(CacheKeys.unitStatus(unitId)).catch(() => {});
 
     return buildSingleResponse({
         id: updated.id,
@@ -209,7 +387,7 @@ export const releaseUnit = async (organizationId, unitId, userId) => {
         },
     });
 
-    await redis.del(CacheKeys.unitStatus(unitId));
+    await redis.del(CacheKeys.unitStatus(unitId)).catch(() => {});
 
     return buildSingleResponse({
         id: updated.id,
@@ -242,7 +420,7 @@ export const recordToken = async (organizationId, unitId, userId, body) => {
         },
     });
 
-    await redis.del(CacheKeys.unitStatus(unitId));
+    await redis.del(CacheKeys.unitStatus(unitId)).catch(() => {});
 
     return buildSingleResponse({
         id: updated.id,

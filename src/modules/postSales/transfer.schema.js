@@ -5,7 +5,10 @@ export const initiateTransferSchema = z.object({
     bookingId: z.string().uuid('Invalid booking ID'),
     unitId: z.string().uuid('Invalid unit ID'),
     toCustomerId: z.string().uuid('Invalid customer ID'),
-    transferFee: z.number().min(0).default(0),
+    transferFee: z.number().min(0).optional(),
+    nocDocumentId: z.string().uuid(
+        'A verified NOC document ID is required to initiate a transfer.'
+    ),
     remarks: z.string().max(500).optional(),
 });
 

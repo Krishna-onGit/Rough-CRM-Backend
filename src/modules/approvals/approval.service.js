@@ -15,6 +15,10 @@ import {
     buildDateRangeFilter,
     cleanObject,
 } from '../../shared/filters.js';
+import { processCancellation } from '../postSales/cancellation.service.js';
+import { processTransfer } from '../postSales/transfer.service.js';
+import { dispatchNotification } from '../../jobs/notificationDispatch.js';
+import { logger } from '../../config/logger.js';
 
 // ── List Approvals ────────────────────────────────────────────────────────────
 
@@ -158,55 +162,158 @@ export const createApproval = async (
 
 // ── Review Approval ───────────────────────────────────────────────────────────
 
+/**
+ * executeApprovedAction — dispatches to the correct processor
+ * based on the approval requestType.
+ *
+ * RUNS INSIDE the caller's $transaction (tx).
+ * This ensures approval status + cascade are atomic.
+ *
+ * @param {Object} approval     — the approval record
+ * @param {string} organizationId
+ * @param {string} userId       — the reviewer
+ * @param {Object} tx           — Prisma transaction client
+ * @param {Array}  notifications — caller-owned notification array
+ */
+const executeApprovedAction = async (
+    approval,
+    organizationId,
+    userId,
+    tx,
+    notifications
+) => {
+    switch (approval.requestType) {
+
+        case 'cancellation': {
+            // entityId on a cancellation approval = cancellationId
+            // processCancellation is called with the tx so it runs
+            // inside our transaction, not a new one.
+            await processCancellation(
+                organizationId,
+                approval.entityId,
+                userId,
+                {
+                    approvedBy: userId,
+                    remarks: approval.reviewRemarks,
+                },
+                tx,          // ← pass transaction client
+                notifications
+            );
+            break;
+        }
+
+        case 'transfer': {
+            await processTransfer(
+                organizationId,
+                approval.entityId,
+                userId,
+                {
+                    approvedBy: userId,
+                    remarks: approval.reviewRemarks,
+                },
+                tx,
+                notifications
+            );
+            break;
+        }
+
+        case 'discount': {
+            // Discount approval only records the approval.
+            // The booking discount was already applied at booking time
+            // in a pending_discount_approval state.
+            // Mark booking discount as approved here if that pattern
+            // is implemented. Otherwise log and continue.
+            logger.info('[Approval] Discount approved', {
+                approvalId: approval.id,
+                entityId: approval.entityId,
+            });
+            break;
+        }
+
+        default: {
+            // refund, possession, other — no auto-execution
+            // these are informational approvals only
+            logger.info('[Approval] No auto-execution for type', {
+                requestType: approval.requestType,
+                approvalId: approval.id,
+            });
+        }
+    }
+};
+
 export const reviewApproval = async (
     organizationId,
     approvalId,
     userId,
     body
 ) => {
+    const { status, reviewRemarks } = body;
+
+    // ── Fetch approval ────────────────────────────────────────────────────────
     const approval = await prisma.approvalRequest.findFirst({
         where: { id: approvalId, organizationId },
     });
     if (!approval) throw new NotFoundError('Approval request');
 
-    // Cannot review own request
-    if (approval.requestedBy === userId) {
-        throw new BusinessRuleError(
-            'You cannot approve or reject your own request.'
-        );
-    }
-
+    // ── Validations ───────────────────────────────────────────────────────────
     if (approval.status !== 'pending') {
         throw new BusinessRuleError(
-            `This approval request is already "${approval.status}".`
+            `Only pending approvals can be reviewed. ` +
+            `Current status: "${approval.status}".`
         );
     }
 
-    const { status, reviewRemarks } = body;
+    if (approval.requestedBy === userId) {
+        throw new BusinessRuleError(
+            'You cannot review your own approval request.'
+        );
+    }
 
-    const updated = await prisma.approvalRequest.update({
-        where: { id: approvalId },
-        data: {
-            status,
-            reviewedBy: userId,
-            reviewedAt: new Date(),
-            reviewRemarks,
-        },
-    });
+    // ── Single atomic transaction: update approval + execute cascade ──────────
+    // If the cascade fails, the approval status also rolls back.
+    // This prevents the stuck state where approval = 'approved'
+    // but the underlying action never completed.
+    const notifications = [];
+
+    await prisma.$transaction(async (tx) => {
+
+        // 1. Update approval status inside the transaction
+        await tx.approvalRequest.update({
+            where: { id: approvalId },
+            data: {
+                status,
+                reviewedBy: userId,
+                reviewedAt: new Date(),
+                reviewRemarks: reviewRemarks || null,
+            },
+        });
+
+        // 2. Execute the downstream action inside the SAME transaction
+        if (status === 'approved') {
+            await executeApprovedAction(
+                approval,
+                organizationId,
+                userId,
+                tx,
+                notifications
+            );
+        }
+
+    }, { timeout: 30000 });
+
+    // 3. Dispatch notifications AFTER transaction commits
+    for (const n of notifications) {
+        await dispatchNotification(n.type, n.payload).catch((err) => {
+            logger.error('[Approval] Post-review notification failed', {
+                type: n.type,
+                err: err.message,
+            });
+        });
+    }
 
     return buildActionResponse(
-        {
-            id: updated.id,
-            requestType: updated.requestType,
-            entityType: updated.entityType,
-            entityId: updated.entityId,
-            previousStatus: 'pending',
-            newStatus: updated.status,
-            reviewedBy: updated.reviewedBy,
-            reviewedAt: updated.reviewedAt,
-        },
-        `Approval request ${status}. ` +
-        `Entity: ${updated.entityType} (${updated.entityId}).`
+        { approvalId, status, requestType: approval.requestType },
+        `Approval request has been ${status}.`
     );
 };
 

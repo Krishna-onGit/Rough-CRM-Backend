@@ -1,14 +1,9 @@
 import { Router } from 'express';
-import { requireAuth } from '../../middleware/auth.js';
-import { requireOrganization } from '../../middleware/organization.js';
 import { requirePermission } from '../../middleware/rbac.js';
 import { validateBody, blockUnitSchema, tokenSchema } from './unit.schema.js';
 import * as unitService from './unit.service.js';
 
 const router = Router();
-
-router.use(requireAuth);
-router.use(requireOrganization);
 
 router.get(
     '/',

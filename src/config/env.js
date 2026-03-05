@@ -25,11 +25,21 @@ const envSchema = z.object({
     // PII Encryption
     PII_ENCRYPTION_KEY: z.string().length(64, 'PII_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)'),
 
-    // AWS S3 (optional for now — will be added later)
+    // AWS S3
     AWS_ACCESS_KEY_ID: z.string().optional(),
     AWS_SECRET_ACCESS_KEY: z.string().optional(),
     AWS_REGION: z.string().default('ap-south-1'),
     AWS_S3_BUCKET: z.string().optional(),
+
+    // SendGrid
+    SENDGRID_API_KEY: z.string().optional(),
+    SENDGRID_FROM_EMAIL: z.string().optional(),
+    SENDGRID_FROM_NAME: z.string().optional(),
+
+    // MSG91
+    MSG91_AUTH_KEY: z.string().optional(),
+    MSG91_SENDER_ID: z.string().default('LEADFW'),
+    MSG91_ROUTE: z.string().default('4'),
 
     // Rate Limiting
     RATE_LIMIT_WINDOW_MS: z.string().default('900000'),
@@ -43,6 +53,26 @@ const envSchema = z.object({
     API_VERSION: z.string().default('v1'),
     LOG_LEVEL: z.string().default('info'),
 
+}).superRefine((data, ctx) => {
+    if (data.NODE_ENV === 'production') {
+        const requiredInProd = [
+            'AWS_ACCESS_KEY_ID',
+            'AWS_SECRET_ACCESS_KEY',
+            'AWS_S3_BUCKET',
+            'SENDGRID_API_KEY',
+            'SENDGRID_FROM_EMAIL',
+        ];
+
+        requiredInProd.forEach((key) => {
+            if (!data[key]) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: `${key} is required in production`,
+                    path: [key],
+                });
+            }
+        });
+    }
 });
 
 const parsed = envSchema.safeParse(process.env);

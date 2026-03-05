@@ -210,8 +210,14 @@ export const updateComplaint = async (
         );
     }
 
+    // Only allow updating fields that exist on the Complaint model
+    const updateData = {};
+    if (body.assignedTo !== undefined) updateData.assignedTo = body.assignedTo;
+    if (body.priority !== undefined) updateData.priority = body.priority;
+    if (body.description !== undefined) updateData.description = body.description;
+    if (body.subject !== undefined) updateData.subject = body.subject;
+
     // Recalculate SLA if priority changes
-    const updateData = { ...body };
     if (body.priority && body.priority !== complaint.priority) {
         const { deadline, hours } = calculateSlaDeadline(body.priority);
         updateData.slaDeadline = deadline;
@@ -267,7 +273,6 @@ export const resolveComplaint = async (
             status: 'resolved',
             resolution: body.resolution,
             resolvedAt,
-            remarks: body.remarks || null,
         },
     });
 
@@ -303,7 +308,7 @@ export const escalateComplaint = async (
     });
     if (!complaint) throw new NotFoundError('Complaint');
 
-    if (['resolved', 'closed', 'escalated'].includes(complaint.status)) {
+    if (['closed', 'escalated'].includes(complaint.status)) {
         throw new BusinessRuleError(
             `Cannot escalate a complaint with status "${complaint.status}".`
         );
@@ -316,7 +321,6 @@ export const escalateComplaint = async (
             status: 'escalated',
             priority: 'high',
             slaBreached: true,
-            remarks: body.remarks,
         },
     });
 

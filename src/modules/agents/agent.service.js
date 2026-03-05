@@ -279,9 +279,15 @@ export const recordCommissionPayment = async (
     });
     if (!commission) throw new NotFoundError('Commission');
 
-    if (commission.status === 'paid') {
+    const PAYOUT_ELIGIBLE_STATUSES = ['sale_completed'];
+
+    if (!PAYOUT_ELIGIBLE_STATUSES.includes(commission.status)) {
         throw new BusinessRuleError(
-            'This commission is already fully paid.'
+            `Commission payout is not yet eligible. ` +
+            `Current status: "${commission.status}". ` +
+            `Payout is only allowed after possession handover sets the ` +
+            `commission to "sale_completed". ` +
+            `Complete possession for this booking first.`
         );
     }
 

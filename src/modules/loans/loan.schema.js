@@ -54,9 +54,9 @@ export const updateLoanStatusSchema = z.object({
     status: z.enum([
         'applied',
         'sanctioned',
-        'disbursed',
+        'disbursing',
+        'fully_disbursed',
         'rejected',
-        'closed',
     ]),
     remarks: z.string().max(500).optional(),
 });

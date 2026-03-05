@@ -75,28 +75,24 @@ export const blockExpiryWorker = new Worker(
     { connection: bullMQConnection }
 );
 
-// ── Schedule recurring job (every 15 minutes) ────────────────────────────────
-export const scheduleBlockExpiryJob = async () => {
-    // Remove any existing repeatable job first (prevent duplicates on restart)
-    const repeatableJobs = await blockExpiryQueue.getRepeatableJobs();
-    for (const job of repeatableJobs) {
+// ── Schedule recurring job ───────────────────────────────────────────────────
+// Remove any existing repeatable job first (prevent duplicates on restart)
+const repeatableJobs = await blockExpiryQueue.getRepeatableJobs();
+for (const job of repeatableJobs) {
+    if (job.name === 'check-expired-blocks') {
         await blockExpiryQueue.removeRepeatableByKey(job.key);
     }
+}
 
-    // Add new repeatable job
-    await blockExpiryQueue.add(
-        'check-expired-blocks',
-        {},
-        {
-            repeat: { every: 15 * 60 * 1000 }, // every 15 minutes
-            jobId: 'block-expiry-cron',
-        }
-    );
-
-    if (isDev) {
-        console.log('[BlockExpiry] Cron job scheduled: every 15 minutes');
+// Add new repeatable job
+await blockExpiryQueue.add(
+    'check-expired-blocks',
+    {},
+    {
+        repeat: { every: 60 * 1000 }, // 1 minute — spec BLK-003
+        jobId: 'block-expiry-cron',
     }
-};
+);
 
 // ── Worker event logging ─────────────────────────────────────────────────────
 blockExpiryWorker.on('completed', (job, result) => {

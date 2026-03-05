@@ -3,5 +3,7 @@ node_modules
 dist
 .DS_Store
 *.txt
+*.log
 test_projects*.js
 tests.js
+reports/

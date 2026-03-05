@@ -43,7 +43,8 @@ router.post(
                 req.user.userId,
                 req.body
             );
-            res.status(201).json(result);
+            const statusCode = result?.data?.isExisting ? 200 : 201;
+            res.status(statusCode).json(result);
         } catch (error) {
             next(error);
         }

@@ -16,12 +16,12 @@ export const createApprovalSchema = z.object({
         'other',
     ]),
     entityType: z.string().min(2).max(100),
-    entityId: z.string().uuid('Invalid entity ID'),
+    entityId: z.string().uuid({ message: 'Invalid entity ID' }),
     justification: z
         .string()
         .min(10, 'Justification must be at least 10 characters')
         .max(1000),
-    requestData: z.record(z.any()).optional(),
+    requestData: z.record(z.string(), z.any()).optional(),
 });
 
 export { validateBody };

@@ -13,6 +13,12 @@ import {
     buildEnumFilter,
     cleanObject,
 } from '../../shared/filters.js';
+import {
+    buildFileKey,
+    generateUploadUrl,
+    generateDownloadUrl,
+    deleteFile,
+} from '../../config/s3.js';
 
 // ── List Documents ────────────────────────────────────────────────────────────
 
@@ -187,5 +193,132 @@ export const verifyDocument = async (
             verifiedBy: updated.verifiedBy,
         },
         `Document "${updated.fileName}" ${body.status}.`
+    );
+};
+
+// ── S3 Operations ────────────────────────────────────────────────────────────
+
+/**
+ * getUploadUrl — returns a presigned S3 upload URL.
+ * Client uploads directly to S3, then calls confirmUpload().
+ */
+export const getUploadUrl = async (
+    organizationId,
+    body,
+    userId
+) => {
+    const { customerId, category, fileName, contentType } = body;
+
+    // Validate customer belongs to org
+    const customer = await prisma.customer.findFirst({
+        where: { id: customerId, organizationId },
+    });
+    if (!customer) throw new NotFoundError('Customer');
+
+    // Generate unique S3 key
+    const fileKey = buildFileKey(
+        organizationId,
+        customerId,
+        category,
+        fileName
+    );
+
+    // Generate presigned upload URL (5 min expiry)
+    const uploadUrl = await generateUploadUrl(fileKey, contentType);
+
+    // Create pending document record
+    const document = await prisma.customerDocument.create({
+        data: {
+            organizationId,
+            customerId,
+            category,
+            fileName,
+            fileKey,
+            contentType: contentType || 'application/octet-stream',
+            status: 'pending',   // becomes 'uploaded' after confirm
+            uploadedBy: userId,
+        },
+    });
+
+    return buildActionResponse(
+        {
+            documentId: document.id,
+            uploadUrl,
+            fileKey,
+            expiresInSeconds: 300,
+        },
+        'Upload URL generated. Upload the file directly to S3, ' +
+        'then call POST /v1/documents/:id/confirm to activate.'
+    );
+};
+
+/**
+ * confirmUpload — marks document as uploaded after S3 PUT completes.
+ * Called by client after successful direct S3 upload.
+ */
+export const confirmUpload = async (
+    organizationId,
+    documentId,
+    userId
+) => {
+    const document = await prisma.customerDocument.findFirst({
+        where: { id: documentId, organizationId },
+    });
+    if (!document) throw new NotFoundError('Document');
+
+    if (document.status !== 'pending') {
+        throw new BusinessRuleError(
+            `Document is already ${document.status}.`
+        );
+    }
+
+    const updated = await prisma.customerDocument.update({
+        where: { id: documentId },
+        data: {
+            status: 'uploaded',
+            confirmedAt: new Date(),
+            confirmedBy: userId,
+        },
+    });
+
+    return buildActionResponse(
+        { documentId, status: 'uploaded' },
+        'Document upload confirmed successfully.'
+    );
+};
+
+/**
+ * getDownloadUrl — returns a presigned S3 download URL.
+ * Never serves the file directly through the app server.
+ */
+export const getDownloadUrl = async (
+    organizationId,
+    documentId,
+    userId
+) => {
+    const document = await prisma.customerDocument.findFirst({
+        where: {
+            id: documentId,
+            organizationId,
+            status: { in: ['uploaded', 'verified'] },
+        },
+    });
+
+    if (!document) {
+        throw new NotFoundError(
+            'Document not found or not yet uploaded.'
+        );
+    }
+
+    const downloadUrl = await generateDownloadUrl(document.fileKey);
+
+    return buildActionResponse(
+        {
+            documentId,
+            downloadUrl,
+            fileName: document.fileName,
+            expiresInSeconds: 3600,
+        },
+        'Download URL generated. URL expires in 1 hour.'
     );
 };

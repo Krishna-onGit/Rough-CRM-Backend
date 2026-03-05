@@ -4,7 +4,30 @@ import { validateBody } from '../auth/auth.schema.js';
 export const createCustomerSchema = z.object({
     fullName: z.string().min(2).max(100),
     fatherSpouse: z.string().max(100).optional(),
-    dateOfBirth: z.string().datetime().optional(),
+    dateOfBirth: z
+        .string()
+        .optional()
+        .refine(
+            (val) => {
+                if (!val) return true; // optional field — skip if absent
+                const dob = new Date(val);
+                if (isNaN(dob.getTime())) return false; // invalid date
+                const today = new Date();
+                const age = today.getFullYear() - dob.getFullYear();
+                const monthDiff = today.getMonth() - dob.getMonth();
+                const dayDiff = today.getDate() - dob.getDate();
+                const exactAge =
+                    monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)
+                        ? age - 1
+                        : age;
+                return exactAge >= 18;
+            },
+            {
+                message:
+                    'Customer must be at least 18 years old. ' +
+                    'Minors cannot be registered as property buyers.',
+            }
+        ),
     panNumber: z
         .string()
         .regex(

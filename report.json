@@ -1,0 +1,77 @@
+{
+  "raw": [
+    {
+      "customer_code": "CUST-0001",
+      "pan_number": "v1:90a79b77b113d7d875a87ce6:2a500f8c1459f86fa803888f9a1430d8:c574fdddc757c4b1a58f",
+      "pan_hash": "4736448c76529b81fa2b55e9607b9e5da044b15e2560c6ac6f50f61e5acf8574"
+    }
+  ],
+  "admin": {
+    "success": true,
+    "data": {
+      "id": "32cf4fa3-a45e-48b5-9d57-2c71d80e1a87",
+      "organizationId": "501d501c-5bd1-4eb5-91af-607542f12c94",
+      "customerCode": "CUST-0001",
+      "fullName": "John Doe",
+      "fatherSpouse": null,
+      "dateOfBirth": null,
+      "panNumber": "ABCDE1234F",
+      "panHash": "4736448c76529b81fa2b55e9607b9e5da044b15e2560c6ac6f50f61e5acf8574",
+      "aadhaarNumber": "123456789012",
+      "mobilePrimary": "9876543210",
+      "mobileAlternate": null,
+      "email": null,
+      "currentAddress": null,
+      "occupation": null,
+      "companyName": null,
+      "annualIncome": null,
+      "paymentMode": null,
+      "preferredBank": null,
+      "loanAmount": null,
+      "coApplicantName": null,
+      "coApplicantPan": null,
+      "coApplicantRel": null,
+      "kycDocuments": [],
+      "kycVerified": false,
+      "isActive": true,
+      "createdBy": "dc543fbd-ddc1-468e-8e67-09b007c31023",
+      "createdAt": "2026-03-02T20:08:35.957Z",
+      "updatedAt": "2026-03-02T20:08:35.957Z",
+      "bookings": []
+    }
+  },
+  "sales": {
+    "success": true,
+    "data": {
+      "id": "32cf4fa3-a45e-48b5-9d57-2c71d80e1a87",
+      "organizationId": "501d501c-5bd1-4eb5-91af-607542f12c94",
+      "customerCode": "CUST-0001",
+      "fullName": "John Doe",
+      "fatherSpouse": null,
+      "dateOfBirth": null,
+      "panNumber": "ABXXXXX4F",
+      "panHash": "4736448c76529b81fa2b55e9607b9e5da044b15e2560c6ac6f50f61e5acf8574",
+      "aadhaarNumber": "XXXX-XXXX-9012",
+      "mobilePrimary": "9876543210",
+      "mobileAlternate": null,
+      "email": null,
+      "currentAddress": null,
+      "occupation": null,
+      "companyName": null,
+      "annualIncome": null,
+      "paymentMode": null,
+      "preferredBank": null,
+      "loanAmount": null,
+      "coApplicantName": null,
+      "coApplicantPan": null,
+      "coApplicantRel": null,
+      "kycDocuments": [],
+      "kycVerified": false,
+      "isActive": true,
+      "createdBy": "dc543fbd-ddc1-468e-8e67-09b007c31023",
+      "createdAt": "2026-03-02T20:08:35.957Z",
+      "updatedAt": "2026-03-02T20:08:35.957Z",
+      "bookings": []
+    }
+  }
+}

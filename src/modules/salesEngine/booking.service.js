@@ -11,14 +11,13 @@ import {
     buildSingleResponse,
     buildActionResponse,
 } from '../../shared/pagination.js';
-import {
-    buildEnumFilter,
-    buildDateRangeFilter,
-    cleanObject,
-} from '../../shared/filters.js';
+import { buildEnumFilter, buildDateRangeFilter, cleanObject } from '../../shared/filters.js';
 import { paiseToRupees, rupeesToPaise } from '../../shared/costSheet.js';
 import { triggerCascade } from '../../cascade/cascadeEngine.js';
 import { CascadeEvents } from '../../cascade/types.js';
+import { decrementSpBlockCounter } from '../units/unit.service.js';
+import { logger } from '../../config/logger.js';
+import { dispatchNotification } from '../../jobs/notificationDispatch.js';
 
 // ── List Bookings ─────────────────────────────────────────────────────────────
 
@@ -165,7 +164,48 @@ export const createBooking = async (organizationId, userId, body) => {
 
     // ── Pre-flight validation ────────────────────────────────────────────────
 
-    // 1. Verify unit exists and is in correct state
+    // 1. Verify customer exists + KYC (checked first so KYC error takes priority)
+    const customer = await prisma.customer.findFirst({
+        where: { id: customerId, organizationId, isActive: true },
+    });
+    if (!customer) throw new NotFoundError('Customer');
+
+    // ── KYC completeness check ────────────────────────────────────────────────
+    // Spec BKG-001: These fields are mandatory for a booking.
+    // A customer can be created with minimal data during lead capture,
+    // but must be complete before real money changes hands.
+    // panHash is used instead of panNumber (panNumber is now ciphertext).
+
+    const REQUIRED_KYC_FIELDS = [
+        'fullName',
+        'dateOfBirth',
+        'mobilePrimary',
+        'email',
+        'currentAddress',
+    ];
+
+    // PAN is checked via panHash (panNumber column holds ciphertext)
+    const missingFields = REQUIRED_KYC_FIELDS.filter(
+        (field) => !customer[field]
+    );
+
+    const missingPan = !customer.panHash;
+
+    if (missingFields.length > 0 || missingPan) {
+        const allMissing = [
+            ...missingFields,
+            ...(missingPan ? ['panNumber'] : []),
+        ];
+
+        throw new BusinessRuleError(
+            `Customer KYC is incomplete. Cannot proceed with booking. ` +
+            `Missing required fields: ${allMissing.join(', ')}. ` +
+            `Update the customer record (PATCH /v1/customers/:id) ` +
+            `before creating a booking.`
+        );
+    }
+
+    // 2. Verify unit exists and is in correct state
     const unit = await prisma.unit.findFirst({
         where: { id: unitId, organizationId },
         include: {
@@ -180,12 +220,6 @@ export const createBooking = async (organizationId, userId, body) => {
             `"token_received" status. Current status: "${unit.status}".`
         );
     }
-
-    // 2. Verify customer exists
-    const customer = await prisma.customer.findFirst({
-        where: { id: customerId, organizationId, isActive: true },
-    });
-    if (!customer) throw new NotFoundError('Customer');
 
     // 3. Verify sales person exists
     const salesPerson = await prisma.salesPerson.findFirst({
@@ -230,6 +264,31 @@ export const createBooking = async (organizationId, userId, body) => {
     const bookingCount = await prisma.booking.count({ where: { organizationId } });
     const bookingCode = `BKG-${String(bookingCount + 1).padStart(4, '0')}`;
 
+    // ── Discount approval gate ────────────────────────────────────────────────
+    // Discounts up to 1% of agreement value: auto-approved, proceed normally.
+    // Discounts above 1%: booking created as 'pending_discount_approval',
+    // approval request auto-created, unit stays 'blocked'.
+
+    const DISCOUNT_AUTO_APPROVE_PCT = 1;
+    let bookingStatus = 'booked';
+    let requiresDiscountApproval = false;
+
+    if (discountPaise > 0n) {
+        const discountPct =
+            (Number(discountPaise) / Number(agreementValue)) * 100;
+
+        if (discountPct > DISCOUNT_AUTO_APPROVE_PCT) {
+            bookingStatus = 'pending_discount_approval';
+            requiresDiscountApproval = true;
+
+            logger.info('[Booking] Discount >1% — requires approval', {
+                discountPct: discountPct.toFixed(2),
+                organizationId,
+                unitId: unitId,
+            });
+        }
+    }
+
     // ── Atomic Transaction: Create Booking + Trigger Cascade ─────────────────
     const result = await prisma.$transaction(async (tx) => {
         // 1. Create the booking record
@@ -247,28 +306,69 @@ export const createBooking = async (organizationId, userId, body) => {
                 discountAmount: discountPaise,
                 tokenAmount: tokenPaise,
                 paymentMode,
-                status: 'booked',
+                status: bookingStatus,
                 bookingDate: new Date(),
                 remarks: remarks || null,
                 createdBy: userId,
             },
         });
 
+        if (requiresDiscountApproval) {
+            const approvalCount = await tx.approvalRequest.count({
+                where: { organizationId },
+            });
+            const approvalCode = `APR-${String(approvalCount + 1).padStart(4, '0')}`;
+
+            await tx.approvalRequest.create({
+                data: {
+                    organizationId,
+                    approvalCode,
+                    requestType: 'discount',
+                    entityType: 'booking',
+                    entityId: booking.id,
+                    requestedBy: userId,
+                    status: 'pending',
+                    justification:
+                        `Discount of ${((Number(discountPaise) / Number(agreementValue)) * 100).toFixed(2)}% ` +
+                        `requested on booking ${booking.bookingCode}. ` +
+                        `Amount: ₹${Number(discountPaise) / 100}. ` +
+                        `Requires director approval (exceeds 1% auto-approve threshold).`,
+                    requestData: {
+                        discountPaise: discountPaise.toString(),
+                        agreementValuePaise: agreementValue.toString(),
+                        discountPct: (
+                            (Number(discountPaise) / Number(agreementValue)) * 100
+                        ).toFixed(2),
+                        bookingCode: booking.bookingCode,
+                        unitId: unitId,
+                    },
+                },
+            });
+        }
+
         // 2. Update unit status to booked + attach sale info
-        await tx.unit.update({
-            where: { id: unitId },
-            data: {
-                status: 'booked',
-                customerId,
-                salesPersonId,
-                agentId: agentId || null,
-                bookingId: booking.id,
-                saleDate: new Date(),
-                finalSaleValue: finalValue,
-                discountAmount: discountPaise,
-                updatedBy: userId,
-            },
-        });
+        if (bookingStatus === 'booked') {
+            await tx.unit.update({
+                where: { id: unitId },
+                data: {
+                    status: 'booked',
+                    customerId,
+                    salesPersonId,
+                    agentId: agentId || null,
+                    bookingId: booking.id,
+                    saleDate: new Date(),
+                    finalSaleValue: finalValue,
+                    discountAmount: discountPaise > 0n ? discountPaise : null,
+                    updatedBy: userId,
+                },
+            });
+        } else {
+            // Unit stays blocked — just link the bookingId for reference
+            await tx.unit.update({
+                where: { id: unitId },
+                data: { bookingId: booking.id },
+            });
+        }
 
         // 3. Update customer's last booking reference (if lead exists, mark won)
         await tx.customer.update({
@@ -299,9 +399,23 @@ export const createBooking = async (organizationId, userId, body) => {
     });
 
     // ── Post-transaction side effects ────────────────────────────────────────
+    // Decrement SP block counter since unit transitioned to Booked
+    if (unit.blockedBy) {
+        await decrementSpBlockCounter(organizationId, unit.blockedBy);
+    }
+
+    // Invalidate analytics dashboard cache on new booking
+    await redis.del(
+        `analytics:dashboard:${organizationId}`
+    ).catch((err) => {
+        logger.warn('[Analytics] Cache invalidation failed', {
+            err: err.message,
+        });
+    });
+
     // Invalidate caches
-    await redis.del(CacheKeys.unitStatus(unitId));
-    await redis.del(CacheKeys.projectStats(unit.projectId));
+    await redis.del(CacheKeys.unitStatus(unitId)).catch(() => {});
+    await redis.del(CacheKeys.projectStats(unit.projectId)).catch(() => {});
 
     return buildActionResponse(
         {
@@ -320,5 +434,85 @@ export const createBooking = async (organizationId, userId, body) => {
         `Booking ${bookingCode} created successfully. ` +
         `${result.cascadeResults.paymentScheduleCount} payment milestones, ` +
         `1 demand letter, and possession record auto-created.`
+    );
+};
+
+export const registerBooking = async (
+    organizationId,
+    bookingId,
+    userId,
+    body
+) => {
+    // ── Fetch booking ─────────────────────────────────────────────────────────
+    const booking = await prisma.booking.findFirst({
+        where: { id: bookingId, organizationId },
+    });
+    if (!booking) throw new NotFoundError('Booking');
+
+    // ── Validation ────────────────────────────────────────────────────────────
+    const REGISTERABLE_STATUSES = ['booked', 'possession_handed'];
+    if (!REGISTERABLE_STATUSES.includes(booking.status)) {
+        throw new BusinessRuleError(
+            `Only active bookings can be registered. ` +
+            `Current status: "${booking.status}".`
+        );
+    }
+
+    if (!body.registrationDate) {
+        throw new BusinessRuleError('Registration date is required.');
+    }
+
+    if (!body.registrationNumber) {
+        throw new BusinessRuleError('Registration number is required.');
+    }
+
+    // ── Atomic transaction ────────────────────────────────────────────────────
+    const notifications = [];
+
+    await prisma.$transaction(async (tx) => {
+
+        // Store registration details on booking
+        await tx.booking.update({
+            where: { id: bookingId },
+            data: {
+                registrationDate: new Date(body.registrationDate),
+                registrationNumber: body.registrationNumber,
+                registrationRemarks: body.remarks || null,
+                registeredBy: userId,
+            },
+        });
+
+        // Fire registration cascade
+        await triggerCascade(
+            CascadeEvents.REGISTRATION_COMPLETED,
+            {
+                bookingId,
+                unitId: booking.unitId,
+                organizationId,
+                customerId: booking.customerId,
+            },
+            tx,
+            notifications
+        );
+
+    }, { timeout: 15000 });
+
+    // Dispatch notifications after commit
+    for (const n of notifications) {
+        await dispatchNotification(n.type, n.payload).catch((err) => {
+            logger.error('[Registration] Notification dispatch failed', {
+                type: n.type, err: err.message,
+            });
+        });
+    }
+
+    return buildActionResponse(
+        {
+            bookingId,
+            status: 'registered',
+            registrationNumber: body.registrationNumber,
+            registrationDate: body.registrationDate,
+        },
+        'Booking registered successfully. Commission status updated.'
     );
 };

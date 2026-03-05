@@ -1,4 +1,6 @@
 import prisma from '../../config/database.js';
+import { encrypt, safeDecrypt } from '../../shared/encryption.js';
+import { hashPan } from '../../shared/cryptoHash.js';
 import {
     NotFoundError,
     ConflictError,
@@ -28,14 +30,27 @@ const generateCustomerCode = async (organizationId) => {
 
 // Mask sensitive fields for non-admin roles
 const maskSensitiveData = (customer, role) => {
-    if (role === 'admin' || role === 'finance') return customer;
+    // Decrypt the encrypted values first
+    const pan = safeDecrypt(customer.panNumber);
+    const aadhaar = safeDecrypt(customer.aadhaarNumber);
+
+    // Admin and finance see full decrypted values
+    if (role === 'admin' || role === 'finance') {
+        return {
+            ...customer,
+            panNumber: pan,
+            aadhaarNumber: aadhaar,
+        };
+    }
+
+    // All other roles see masked values
     return {
         ...customer,
-        panNumber: customer.panNumber
-            ? `${customer.panNumber.slice(0, 2)}XXXXX${customer.panNumber.slice(-2)}`
+        panNumber: pan
+            ? `${pan.slice(0, 2)}XXXXX${pan.slice(-2)}`
             : null,
-        aadhaarNumber: customer.aadhaarNumber
-            ? `XXXX-XXXX-${customer.aadhaarNumber.slice(-4)}`
+        aadhaarNumber: aadhaar
+            ? `XXXX-XXXX-${aadhaar.slice(-4)}`
             : null,
     };
 };
@@ -140,19 +155,26 @@ export const createCustomer = async (
     userId,
     body
 ) => {
-    // Check PAN uniqueness within org
+    // ── PAN find-or-create (BKG-006) ────────────────────────────────────
     if (body.panNumber) {
-        const existingPan = await prisma.customer.findFirst({
-            where: {
-                organizationId,
-                panNumber: body.panNumber,
-                isActive: true,
-            },
+        const panHash = hashPan(body.panNumber);
+
+        const existingByPan = await prisma.customer.findFirst({
+            where: { organizationId, panHash, isActive: true },
         });
-        if (existingPan) {
-            throw new ConflictError(
-                `A customer with PAN ${body.panNumber} already exists ` +
-                `(${existingPan.customerCode}).`
+
+        if (existingByPan) {
+            // Return existing customer — do NOT create duplicate
+            return buildActionResponse(
+                {
+                    id: existingByPan.id,
+                    customerCode: existingByPan.customerCode,
+                    fullName: existingByPan.fullName,
+                    mobilePrimary: existingByPan.mobilePrimary,
+                    isExisting: true,
+                },
+                `Returning customer found (${existingByPan.customerCode}). ` +
+                `Use this customer record for the new booking.`
             );
         }
     }
@@ -179,6 +201,12 @@ export const createCustomer = async (
             ...body,
             organizationId,
             customerCode,
+            // Encrypt PAN and Aadhaar before storing
+            panNumber: body.panNumber ? encrypt(body.panNumber) : null,
+            panHash: body.panNumber ? hashPan(body.panNumber) : null,
+            aadhaarNumber: body.aadhaarNumber
+                ? encrypt(body.aadhaarNumber)
+                : null,
             annualIncome: body.annualIncome
                 ? rupeesToPaise(body.annualIncome)
                 : null,
@@ -260,7 +288,7 @@ export const verifyKyc = async (
     if (!customer) throw new NotFoundError('Customer');
 
     // Require at least PAN to verify KYC
-    if (body.kycVerified && !customer.panNumber) {
+    if (body.kycVerified && !customer.panHash) {
         throw new BusinessRuleError(
             'Cannot verify KYC without a PAN number on file.'
         );

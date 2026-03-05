@@ -19,15 +19,7 @@ import auditRouter from './modules/audit/audit.routes.js';
 import loanRouter from './modules/loans/loan.routes.js';
 import { auditLogger } from './middleware/auditLogger.js';
 import bookingRouter from './modules/salesEngine/booking.routes.js';
-import {
-    blockExpiryWorker,
-    scheduleBlockExpiryJob,
-} from './jobs/blockExpiry.job.js';
-
-import {
-    demandOverdueWorker,
-    scheduleDemandOverdueJob,
-} from './jobs/demandOverdue.job.js';
+// Jobs loaded dynamically after server starts to prevent Redis errors crashing startup
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
@@ -39,7 +31,10 @@ import {
     authRateLimiter,
     apiRateLimiter,
     analyticsRateLimiter,
+    orgRateLimiter,
 } from './middleware/rateLimiter.js';
+import { requireAuth } from './middleware/auth.js';
+import { requireOrganization } from './middleware/organization.js';
 import {
     validateContentType,
     attachRequestId,
@@ -49,6 +44,16 @@ import { logger } from './config/logger.js';
 import authRouter from './modules/auth/auth.routes.js';
 import projectRouter from './modules/projects/project.routes.js';
 import unitRouter from './modules/units/unit.routes.js';
+
+// ── BigInt JSON Serializer ───────────────────────────────────────────────────
+// BigInt does not serialize to JSON natively in JavaScript.
+// This global override ensures BigInt values are safely serialized
+// as numbers (or strings for very large values exceeding safe integer range).
+BigInt.prototype.toJSON = function () {
+    const int = Number.parseInt(this.toString());
+    return Number.isSafeInteger(int) ? int : this.toString();
+};
+
 const app = express();
 
 // ── Security Middleware ─────────────────────────────────────────────────────
@@ -94,42 +99,42 @@ app.get('/health', async (req, res) => {
         health.status = 'degraded';
     }
 
-    // Check Redis
+    // Check Redis (non-fatal — Redis degraded does not fail health check)
     try {
         await redis.ping();
         health.services.redis = 'ok';
     } catch {
-        health.services.redis = 'error';
-        health.status = 'degraded';
+        health.services.redis = 'degraded';
     }
 
-    const statusCode = health.status === 'ok' ? 200 : 503;
+    // Only 503 if database is down (Redis degraded is tolerated)
+    const statusCode = health.services.database === 'error' ? 503 : 200;
     res.status(statusCode).json(health);
 });
 
 // ── API Routes ───────────────────────────────────────────────────────────────
 app.use('/v1/auth', authRateLimiter, authRouter);
-app.use('/v1/projects', projectRouter);
-app.use('/v1/units', unitRouter);
-app.use('/v1/bookings', bookingRouter);
-app.use('/v1/leads', leadRouter);
-app.use('/v1/site-visits', siteVisitRouter);
-app.use('/v1/follow-ups', followUpRouter);
-app.use('/v1/payments', paymentRouter);
-app.use('/v1/demand-letters', demandLetterRouter);
-app.use('/v1/cancellations', cancellationRouter);
-app.use('/v1/transfers', transferRouter);
-app.use('/v1/possessions', possessionRouter);
-app.use('/v1/customers', customerRouter);
-app.use('/v1/documents', documentRouter);
-app.use('/v1/complaints', complaintRouter);
-app.use('/v1/communications', communicationRouter);
-app.use('/v1/sales-team', salesTeamRouter);
-app.use('/v1/agents', agentRouter);
-app.use('/v1/analytics', analyticsRateLimiter, analyticsRouter);
-app.use('/v1/audit', auditRouter);
-app.use('/v1/approvals', approvalRouter);
-app.use('/v1/loans', loanRouter);
+app.use('/v1/projects', requireAuth, requireOrganization, orgRateLimiter, projectRouter);
+app.use('/v1/units', requireAuth, requireOrganization, orgRateLimiter, unitRouter);
+app.use('/v1/bookings', requireAuth, requireOrganization, orgRateLimiter, bookingRouter);
+app.use('/v1/leads', requireAuth, requireOrganization, orgRateLimiter, leadRouter);
+app.use('/v1/site-visits', requireAuth, requireOrganization, orgRateLimiter, siteVisitRouter);
+app.use('/v1/follow-ups', requireAuth, requireOrganization, orgRateLimiter, followUpRouter);
+app.use('/v1/payments', requireAuth, requireOrganization, orgRateLimiter, paymentRouter);
+app.use('/v1/demand-letters', requireAuth, requireOrganization, orgRateLimiter, demandLetterRouter);
+app.use('/v1/cancellations', requireAuth, requireOrganization, orgRateLimiter, cancellationRouter);
+app.use('/v1/transfers', requireAuth, requireOrganization, orgRateLimiter, transferRouter);
+app.use('/v1/possessions', requireAuth, requireOrganization, orgRateLimiter, possessionRouter);
+app.use('/v1/customers', requireAuth, requireOrganization, orgRateLimiter, customerRouter);
+app.use('/v1/documents', requireAuth, requireOrganization, orgRateLimiter, documentRouter);
+app.use('/v1/complaints', requireAuth, requireOrganization, orgRateLimiter, complaintRouter);
+app.use('/v1/communications', requireAuth, requireOrganization, orgRateLimiter, communicationRouter);
+app.use('/v1/sales-team', requireAuth, requireOrganization, orgRateLimiter, salesTeamRouter);
+app.use('/v1/agents', requireAuth, requireOrganization, orgRateLimiter, agentRouter);
+app.use('/v1/analytics', analyticsRateLimiter, requireAuth, requireOrganization, orgRateLimiter, analyticsRouter);
+app.use('/v1/audit', requireAuth, requireOrganization, orgRateLimiter, auditRouter);
+app.use('/v1/approvals', requireAuth, requireOrganization, orgRateLimiter, approvalRouter);
+app.use('/v1/loans', requireAuth, requireOrganization, orgRateLimiter, loanRouter);
 // Base API info route
 app.get('/v1', (req, res) => {
     res.json({
@@ -154,7 +159,7 @@ app.use(globalErrorHandler);
 // ── Server Startup ──────────────────────────────────────────────────────────
 const PORT = parseInt(env.PORT, 10);
 
-const server = app.listen(PORT, async () => {
+const server = app.listen(PORT, () => {
     logger.info('LeadFlow AI Backend started', {
         environment: env.NODE_ENV,
         port: PORT,
@@ -162,14 +167,19 @@ const server = app.listen(PORT, async () => {
         health: `http://localhost:${PORT}/health`,
     });
 
-    // ── Start Background Jobs ───────────────────────────────────────────────────
-    try {
-        await scheduleBlockExpiryJob();
-        await scheduleDemandOverdueJob();
-        console.log('Background jobs scheduled successfully.');
-    } catch (err) {
-        console.error('Failed to schedule background jobs:', err.message);
-    }
+    // Load background jobs after server is ready — errors won't crash startup
+    const jobFiles = [
+        './jobs/blockExpiry.job.js',
+        './jobs/demandOverdue.job.js',
+        './jobs/slaBreachCheck.job.js',
+        './jobs/approvalEscalation.job.js',
+        './jobs/notificationWorker.js',
+    ];
+    jobFiles.forEach((file) => {
+        import(file).catch((err) => {
+            logger.warn(`Background job failed to start: ${file}`, { err: err.message });
+        });
+    });
 });
 
 // ── Graceful Shutdown ───────────────────────────────────────────────────────
@@ -187,7 +197,15 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    logger.warn('Unhandled Rejection', { reason: reason?.message || String(reason) });
+});
+
+// Prevent ioredis/BullMQ Redis errors from crashing the server in non-production
+process.on('uncaughtException', (err) => {
+    logger.warn('Uncaught Exception (non-fatal)', { message: err.message, code: err.code });
+    if (env.NODE_ENV === 'production') {
+        process.exit(1);
+    }
 });
 
 export default app;

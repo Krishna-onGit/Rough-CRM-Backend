@@ -20,7 +20,7 @@ export const listAuditLogs = async (
 
     const where = cleanObject({
         organizationId,
-        userId: query.userId || undefined,
+        actorId: query.userId || undefined,
         entityType: query.entityType || undefined,
         entityId: query.entityId || undefined,
         action: query.action || undefined,
@@ -41,13 +41,13 @@ export const listAuditLogs = async (
             orderBy: { createdAt: 'desc' },
             select: {
                 id: true,
-                userId: true,
+                actorId: true,
+                actorRole: true,
                 action: true,
                 entityType: true,
                 entityId: true,
+                entityCode: true,
                 metadata: true,
-                ipAddress: true,
-                userAgent: true,
                 createdAt: true,
             },
         }),
@@ -70,10 +70,11 @@ export const getEntityAuditTrail = async (
         orderBy: { createdAt: 'asc' },
         select: {
             id: true,
-            userId: true,
+            actorId: true,
+            actorRole: true,
             action: true,
+            entityCode: true,
             metadata: true,
-            ipAddress: true,
             createdAt: true,
         },
     });
@@ -100,20 +101,21 @@ export const getUserActivity = async (
 
     const [logs, total] = await Promise.all([
         prisma.auditLog.findMany({
-            where: { organizationId, userId },
+            where: { organizationId, actorId: userId },
             skip,
             take,
             orderBy: { createdAt: 'desc' },
             select: {
                 id: true,
+                actorId: true,
                 action: true,
                 entityType: true,
                 entityId: true,
-                ipAddress: true,
+                entityCode: true,
                 createdAt: true,
             },
         }),
-        prisma.auditLog.count({ where: { organizationId, userId } }),
+        prisma.auditLog.count({ where: { organizationId, actorId: userId } }),
     ]);
 
     return buildPaginatedResponse(logs, total, page, pageSize);

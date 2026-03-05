@@ -4,10 +4,13 @@ import { bullMQConnection } from '../config/redis.js';
 export const notificationQueue = new Queue('notifications', {
     connection: bullMQConnection,
     defaultJobOptions: {
-        removeOnComplete: 200,
-        removeOnFail: 500,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 3000 },
+        attempts: 5,
+        backoff: {
+            type: 'exponential',
+            delay: 2000,
+        },
+        removeOnComplete: { count: 1000 },
+        removeOnFail: { count: 5000 },
     },
 });
 

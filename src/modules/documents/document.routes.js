@@ -67,4 +67,55 @@ router.patch(
     }
 );
 
+router.post(
+    '/upload-url',
+    requirePermission('documents:create'),
+    async (req, res, next) => {
+        try {
+            const result = await documentService.getUploadUrl(
+                req.organizationId,
+                req.body,
+                req.user.userId
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+router.post(
+    '/:id/confirm',
+    requirePermission('documents:create'),
+    async (req, res, next) => {
+        try {
+            const result = await documentService.confirmUpload(
+                req.organizationId,
+                req.params.id,
+                req.user.userId
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+router.get(
+    '/:id/download',
+    requirePermission('documents:read'),
+    async (req, res, next) => {
+        try {
+            const result = await documentService.getDownloadUrl(
+                req.organizationId,
+                req.params.id,
+                req.user.userId
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
 export default router;

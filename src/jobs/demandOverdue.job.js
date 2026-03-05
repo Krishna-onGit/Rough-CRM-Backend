@@ -74,25 +74,21 @@ export const demandOverdueWorker = new Worker(
 );
 
 // ── Schedule daily at 1:00 AM ────────────────────────────────────────────────
-export const scheduleDemandOverdueJob = async () => {
-    const repeatableJobs = await demandOverdueQueue.getRepeatableJobs();
-    for (const job of repeatableJobs) {
+const repeatableJobs = await demandOverdueQueue.getRepeatableJobs();
+for (const job of repeatableJobs) {
+    if (job.name === 'check-overdue-demands') {
         await demandOverdueQueue.removeRepeatableByKey(job.key);
     }
+}
 
-    await demandOverdueQueue.add(
-        'check-overdue-demands',
-        {},
-        {
-            repeat: { pattern: '0 1 * * *' }, // daily at 1 AM
-            jobId: 'demand-overdue-cron',
-        }
-    );
-
-    if (isDev) {
-        console.log('[DemandOverdue] Cron job scheduled: daily at 1:00 AM');
+await demandOverdueQueue.add(
+    'check-overdue-demands',
+    {},
+    {
+        repeat: { every: 60 * 60 * 1000 }, // every 1 hour
+        jobId: 'demand-overdue-cron',
     }
-};
+);
 
 demandOverdueWorker.on('completed', (job, result) => {
     if (isDev && result.marked > 0) {

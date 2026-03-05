@@ -17,6 +17,48 @@ const SKIP_ROUTES = [
  * Attach as app.use() AFTER routes are mounted.
  * Uses res.on('finish') to capture response status.
  */
+
+// ── Audit log body sanitization — allowlist approach ─────────
+// Only log fields that are explicitly known to be safe.
+// Denylist approach misses: refreshToken, requestData JSONB,
+// plaintext PAN in request body (encrypted in DB but plaintext
+// in transit), and any future sensitive fields added to schemas.
+
+const AUDIT_SAFE_FIELDS = new Set([
+    // Identity references (IDs only, no PII)
+    'id', 'bookingId', 'unitId', 'customerId', 'projectId',
+    'organizationId', 'salesPersonId', 'agentId', 'leadId',
+    'siteVisitId', 'followUpId', 'paymentId', 'demandLetterId',
+    'complaintId', 'approvalId', 'loanId', 'transferId',
+    'cancellationId', 'possessionId', 'documentId',
+
+    // Status and category fields (safe enums)
+    'status', 'category', 'priority', 'requestType',
+    'entityType', 'direction', 'channel', 'paymentMode',
+
+    // Financial amounts (numbers only, no identity)
+    'amount', 'transferFee', 'discountAmount',
+
+    // Dates and scheduling
+    'bookingDate', 'visitDate', 'scheduledAt', 'dueDate',
+    'registrationDate', 'disbursementDate', 'possessionDate',
+
+    // Non-sensitive descriptors
+    'remarks', 'subject', 'justification', 'lostReason',
+    'bounceReason', 'duration', 'followUpType', 'visitType',
+]);
+
+const sanitizeBodyForAudit = (body) => {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return {};
+    }
+    return Object.fromEntries(
+        Object.entries(body).filter(([key]) =>
+            AUDIT_SAFE_FIELDS.has(key)
+        )
+    );
+};
+
 export const auditLogger = (req, res, next) => {
     // Only log mutating methods
     if (!['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
@@ -60,11 +102,7 @@ export const auditLogger = (req, res, next) => {
             }
 
             // Sanitize request body — remove sensitive fields
-            const sanitizedBody = { ...req.body };
-            delete sanitizedBody.password;
-            delete sanitizedBody.refreshToken;
-            delete sanitizedBody.panNumber;
-            delete sanitizedBody.aadhaarNumber;
+            const sanitizedBody = sanitizeBodyForAudit(req.body);
 
             await prisma.auditLog.create({
                 data: {

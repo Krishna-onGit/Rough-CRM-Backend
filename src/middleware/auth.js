@@ -22,9 +22,15 @@ export const requireAuth = async (req, res, next) => {
         }
 
         // 2. Check if token is blacklisted (user logged out)
-        const blacklisted = await redis.get(`blacklist:${token}`);
-        if (blacklisted) {
-            throw new AuthenticationError('Token has been invalidated. Please log in again.');
+        // Non-fatal: if Redis is unavailable, skip blacklist check
+        try {
+            const blacklisted = await redis.get(`blacklist:${token}`);
+            if (blacklisted) {
+                throw new AuthenticationError('Token has been invalidated. Please log in again.');
+            }
+        } catch (redisErr) {
+            if (redisErr instanceof AuthenticationError) throw redisErr;
+            // Redis unavailable — proceed without blacklist check
         }
 
         // 3. Verify token signature and expiry

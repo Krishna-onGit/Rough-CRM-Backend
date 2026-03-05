@@ -14,8 +14,9 @@ export const getExecutiveDashboard = async (
     query = {}
 ) => {
     const cacheKey = `analytics:dashboard:${organizationId}`;
-    const cached = await redis.get(cacheKey);
-    if (cached) return { success: true, data: JSON.parse(cached), cached: true };
+    let cached = null;
+    try { cached = await redis.get(cacheKey); } catch (_) { /* Redis unavailable */ }
+    if (cached) return { success: true, data: cached, cached: true };
 
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -167,7 +168,7 @@ export const getExecutiveDashboard = async (
         complaints: { open: openComplaints, slaBreached },
     };
 
-    await redis.setex(cacheKey, CACHE_TTL, JSON.stringify(data));
+    await redis.setex(cacheKey, CACHE_TTL, data).catch(() => {});
     return { success: true, data, cached: false };
 };
 
@@ -250,7 +251,7 @@ export const getSalesAnalytics = async (
 
     // Config-wise sales
     const byConfig = await prisma.unit.groupBy({
-        by: ['unitConfig', 'status'],
+        by: ['config', 'status'],
         where: {
             organizationId,
             status: { in: ['booked', 'registered', 'possession_handed'] },
@@ -274,7 +275,7 @@ export const getSalesAnalytics = async (
             })),
             monthlyTrend,
             byConfig: byConfig.map((c) => ({
-                config: c.unitConfig,
+                config: c.config,
                 status: c.status,
                 count: c._count.id,
             })),

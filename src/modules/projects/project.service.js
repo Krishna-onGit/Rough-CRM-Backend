@@ -238,8 +238,8 @@ export const updateProject = async (organizationId, projectId, userId, body) => 
         data: updateData,
     });
 
-    // Invalidate cache
-    await redis.del(CacheKeys.projectStats(projectId));
+    // Invalidate cache (non-fatal)
+    await redis.del(CacheKeys.projectStats(projectId)).catch(() => {});
 
     return buildActionResponse(
         { ...updated, baseRate: Number(updated.baseRate) / 100 },
@@ -347,8 +347,8 @@ export const addTowers = async (organizationId, projectId, userId, towersData) =
         return { towers: createdTowers, totalUnitsCreated };
     });
 
-    // Invalidate project stats cache
-    await redis.del(CacheKeys.projectStats(projectId));
+    // Invalidate project stats cache (non-fatal)
+    await redis.del(CacheKeys.projectStats(projectId)).catch(() => {});
 
     return buildActionResponse(
         result,
@@ -361,8 +361,9 @@ export const addTowers = async (organizationId, projectId, userId, towersData) =
 export const getProjectUnitStats = async (organizationId, projectId) => {
     // Try cache first
     const cacheKey = CacheKeys.projectStats(projectId);
-    const cached = await redis.get(cacheKey);
-    if (cached) return buildSingleResponse(JSON.parse(cached));
+    let cached = null;
+    try { cached = await redis.get(cacheKey); } catch (_) { /* Redis unavailable */ }
+    if (cached) return buildSingleResponse(typeof cached === 'string' ? JSON.parse(cached) : cached);
 
     const project = await prisma.project.findFirst({
         where: { id: projectId, organizationId, isActive: true },
@@ -395,10 +396,8 @@ export const getProjectUnitStats = async (organizationId, projectId) => {
         cancelled: statsMap.cancelled || 0,
     };
 
-    // Cache the result
-    await redis.set(cacheKey, JSON.stringify(stats), {
-        ex: CacheTTL.projectStats,
-    });
+    // Cache the result (non-fatal)
+    await redis.set(cacheKey, stats, { ex: CacheTTL.projectStats }).catch(() => {});
 
     return buildSingleResponse(stats);
 };
