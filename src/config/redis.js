@@ -1,4 +1,5 @@
 import { Redis } from '@upstash/redis';
+import IORedis from 'ioredis';
 import { env } from './env.js';
 
 // ── Upstash Redis client (for caching: get, set, del) ──────────────────────
@@ -7,14 +8,12 @@ export const redis = new Redis({
     token: env.UPSTASH_REDIS_REST_TOKEN,
 });
 
-// ── BullMQ connection options ───────────────────────────────────────────────
-// BullMQ needs the raw connection details in this specific format
-export const bullMQConnection = {
-    host: new URL(env.UPSTASH_REDIS_REST_URL).hostname,
-    port: 6379,
-    password: env.UPSTASH_REDIS_REST_TOKEN,
-    tls: {},   // Upstash requires TLS
-};
+// ── BullMQ connection (local Redis — avoids Upstash request limit) ──────────
+// BullMQ fires many Redis commands per tick; keep it off Upstash.
+export const bullMQConnection = new IORedis(
+    env.BULL_REDIS_URL || 'redis://localhost:6379',
+    { maxRetriesPerRequest: null }  // required by BullMQ
+);
 
 // ── Cache key helpers (centralized — never hardcode keys elsewhere) ─────────
 export const CacheKeys = {

@@ -16,7 +16,7 @@ router.use(requireAuth);
 router.use(requireOrganization);
 
 router.get(
-    '/pending/count',
+    '/pending-count',
     requirePermission('approvals:read'),
     async (req, res, next) => {
         try {

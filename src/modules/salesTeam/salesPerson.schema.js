@@ -3,14 +3,6 @@ import { validateBody } from '../auth/auth.schema.js';
 
 export const createSalesPersonSchema = z.object({
     userId: z.string().uuid().optional(),
-    spCode: z
-        .string()
-        .min(2)
-        .max(20)
-        .regex(
-            /^[A-Z0-9-]+$/,
-            'SP code must be uppercase letters, numbers, hyphens only'
-        ),
     fullName: z.string().min(2).max(100),
     mobile: z
         .string()

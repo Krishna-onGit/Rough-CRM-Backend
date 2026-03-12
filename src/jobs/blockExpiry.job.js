@@ -59,6 +59,26 @@ export const blockExpiryWorker = new Worker(
             },
         });
 
+        // Write audit log entries for each auto-released block
+        await prisma.auditLog.createMany({
+            data: expiredUnits.map((unit) => ({
+                organizationId: unit.organizationId,
+                actorId: null,
+                actorRole: 'system',
+                action: 'status_change',
+                entityType: 'unit',
+                entityId: unit.id,
+                entityCode: unit.unitNumber,
+                metadata: {
+                    from: 'blocked',
+                    to: 'available',
+                    reason: 'block_expired',
+                    blockedBy: unit.blockedBy,
+                    autoReleasedAt: now.toISOString(),
+                },
+            })),
+        });
+
         if (isDev) {
             console.log(
                 `[BlockExpiry] Released ${expiredUnits.length} expired blocks:`,

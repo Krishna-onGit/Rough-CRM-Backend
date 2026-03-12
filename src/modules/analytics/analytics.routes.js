@@ -60,4 +60,90 @@ router.get(
     }
 );
 
+// ── Leaderboard ───────────────────────────────────────────────────────────────
+router.get(
+    '/leaderboard',
+    requirePermission('analytics:read'),
+    async (req, res, next) => {
+        try {
+            const result = await analyticsService.getLeaderboard(
+                req.organizationId,
+                req.query
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+// ── Channel Analytics ─────────────────────────────────────────────────────────
+router.get(
+    '/channels',
+    requirePermission('analytics:read'),
+    async (req, res, next) => {
+        try {
+            const result = await analyticsService.getChannelAnalytics(
+                req.organizationId,
+                req.query
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+// ── Agent Analytics (list) ────────────────────────────────────────────────────
+router.get(
+    '/agents',
+    requirePermission('analytics:read'),
+    async (req, res, next) => {
+        try {
+            const result = await analyticsService.getAgentAnalytics(
+                req.organizationId,
+                req.query
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+// ── Agent Analytics (single agent drill-down) ─────────────────────────────────
+router.get(
+    '/agents/:agentId',
+    requirePermission('analytics:read'),
+    async (req, res, next) => {
+        try {
+            const result = await analyticsService.getAgentDetail(
+                req.organizationId,
+                req.params.agentId,
+                req.query
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+// ── Heatmap ───────────────────────────────────────────────────────────────────
+router.get(
+    '/heatmap',
+    requirePermission('analytics:read'),
+    async (req, res, next) => {
+        try {
+            const result = await analyticsService.getHeatmapData(
+                req.organizationId,
+                req.query
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
 export default router;

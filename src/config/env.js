@@ -12,9 +12,12 @@ const envSchema = z.object({
     // Database (Supabase PostgreSQL)
     DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
-    // Redis (Upstash)
+    // Redis (Upstash — caching only)
     UPSTASH_REDIS_REST_URL: z.string().min(1, 'UPSTASH_REDIS_REST_URL is required'),
     UPSTASH_REDIS_REST_TOKEN: z.string().min(1, 'UPSTASH_REDIS_REST_TOKEN is required'),
+
+    // Redis (local — BullMQ queues)
+    BULL_REDIS_URL: z.string().default('redis://localhost:6379'),
 
     // JWT
     JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),

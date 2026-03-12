@@ -2,15 +2,7 @@ import { z } from 'zod';
 import { validateBody } from '../auth/auth.schema.js';
 
 export const createAgentSchema = z.object({
-    agentCode: z
-        .string()
-        .min(2)
-        .max(20)
-        .regex(
-            /^[A-Z0-9-]+$/,
-            'Agent code must be uppercase letters, numbers, hyphens only'
-        ),
-    firmName: z.string().max(100).optional(),
+    firmName: z.string().min(1).max(100),
     contactPerson: z.string().min(2).max(100),
     mobile: z
         .string()
@@ -19,7 +11,8 @@ export const createAgentSchema = z.object({
     reraNumber: z
         .string()
         .min(5)
-        .max(50),
+        .max(50)
+        .optional(),
     pan: z
         .string()
         .regex(

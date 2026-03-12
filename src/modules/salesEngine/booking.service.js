@@ -437,6 +437,80 @@ export const createBooking = async (organizationId, userId, body) => {
     );
 };
 
+// ── Execute Agreement ─────────────────────────────────────────────────────────
+
+export const executeAgreement = async (bookingId, data, actor) => {
+    const { organizationId, userId } = actor;
+
+    if (!data.agreementDate) {
+        const err = new BusinessRuleError('agreementDate is required.');
+        err.code = 'VALIDATION_ERROR';
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const agreementDate = new Date(data.agreementDate);
+    if (isNaN(agreementDate.getTime())) {
+        const err = new BusinessRuleError('agreementDate must be a valid ISO datetime.');
+        err.code = 'VALIDATION_ERROR';
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const booking = await prisma.booking.findFirst({
+        where: { id: bookingId, organizationId },
+    });
+    if (!booking) throw new NotFoundError('Booking');
+
+    const ALLOWED_STATUSES = ['booked', 'pending_discount_approval'];
+    if (!ALLOWED_STATUSES.includes(booking.status)) {
+        const err = new ConflictError(
+            `Booking must be in "booked" status to execute agreement. ` +
+            `Current status: "${booking.status}".`
+        );
+        err.code = 'BOOKING_NOT_ACTIVE';
+        throw err;
+    }
+
+    const [updatedBooking, updatedUnit] = await prisma.$transaction([
+        prisma.booking.update({
+            where: { id: bookingId },
+            data: { status: 'agreement_done', agreementDate },
+        }),
+        prisma.unit.update({
+            where: { id: booking.unitId },
+            data: { status: 'agreement_done' },
+        }),
+        prisma.auditLog.create({
+            data: {
+                organizationId,
+                actorId: userId,
+                action: 'status_change',
+                entityType: 'booking',
+                entityId: bookingId,
+                entityCode: booking.bookingCode,
+                metadata: {
+                    from: booking.status,
+                    to: 'agreement_done',
+                    agreementDate: agreementDate.toISOString(),
+                },
+            },
+        }),
+    ]);
+
+    return {
+        success: true,
+        message: `Agreement executed for booking ${booking.bookingCode}.`,
+        data: {
+            bookingId: updatedBooking.id,
+            bookingCode: updatedBooking.bookingCode,
+            status: updatedBooking.status,
+            agreementDate: updatedBooking.agreementDate,
+            unitStatus: updatedUnit.status,
+        },
+    };
+};
+
 export const registerBooking = async (
     organizationId,
     bookingId,

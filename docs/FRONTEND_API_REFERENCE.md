@@ -2,7 +2,43 @@
 
 > **Version:** 0.15.0 · **Base URL:** `http://localhost:5000` · **Prefix:** `/v1`
 > **Content-Type:** `application/json` (required for POST/PATCH/PUT)
-> **137 endpoints · 186/186 assertions passing**
+> **107 endpoints · 24 modules documented**
+> **Verified:** All module docs re-traced from source on 2026-03-11. See [VERIFICATION_NOTES.md](VERIFICATION_NOTES.md) for corrections found.
+
+---
+
+## Module Documentation Index
+
+> Each module has a dedicated reference file in the `/docs` folder. Use the links below for focused, module-specific documentation including full request/response schemas.
+
+| # | Module | File | Endpoints | Base Path |
+|---|---|---|---|---|
+| 1 | Auth | [auth.md](auth.md) | 5 | `/v1/auth` |
+| 2 | Projects | [projects.md](projects.md) | 8 | `/v1/projects` |
+| 3 | Units | [units.md](units.md) | 6 | `/v1/units` |
+| 4 | Sales Team | [sales-team.md](sales-team.md) | 5 | `/v1/sales-team` |
+| 5 | Agents | [agents.md](agents.md) | 6 | `/v1/agents` |
+| 6 | Customers | [customers.md](customers.md) | 5 | `/v1/customers` |
+| 7 | Leads | [leads.md](leads.md) | 5 | `/v1/leads` |
+| 8 | Site Visits | [site-visits.md](site-visits.md) | 3 | `/v1/site-visits` |
+| 9 | Follow-Ups | [follow-ups.md](follow-ups.md) | 3 | `/v1/follow-ups` |
+| 10 | Bookings | [bookings.md](bookings.md) | 4 | `/v1/bookings` |
+| 11 | Payments | [payments.md](payments.md) | 4 | `/v1/payments` |
+| 12 | Demand Letters | [demand-letters.md](demand-letters.md) | 4 | `/v1/demand-letters` |
+| 13 | Documents | [documents.md](documents.md) | 6 | `/v1/documents` |
+| 14 | Complaints | [complaints.md](complaints.md) | 6 | `/v1/complaints` |
+| 15 | Communications | [communications.md](communications.md) | 3 | `/v1/communications` |
+| 16 | Approvals | [approvals.md](approvals.md) | 5 | `/v1/approvals` |
+| 17 | Loans | [loans.md](loans.md) | 6 | `/v1/loans` |
+| 18 | Cancellations | [cancellations.md](cancellations.md) | 4 | `/v1/cancellations` |
+| 19 | Transfers | [transfers.md](transfers.md) | 4 | `/v1/transfers` |
+| 20 | Possessions | [possessions.md](possessions.md) | 7 | `/v1/possessions` |
+| 21 | Analytics | [analytics.md](analytics.md) | 3 | `/v1/analytics` |
+| 22 | Audit Log | [audit-log.md](audit-log.md) | 3 | `/v1/audit` |
+| 23 | System Health | [system-health.md](system-health.md) | 2 | `/health`, `/v1` |
+| 24 | Commissions | [commissions.md](commissions.md) | 1 | via `/v1/agents` |
+
+**Total: 107 endpoints across 21 route files**
 
 ---
 

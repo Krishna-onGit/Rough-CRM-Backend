@@ -150,27 +150,23 @@ export const createAgent = async (
     userId,
     body
 ) => {
-    const { agentCode, reraNumber, mobile, ...rest } = body;
+    const { reraNumber, mobile, ...rest } = body;
 
-    // Check agent code uniqueness
-    const existingCode = await prisma.agent.findFirst({
-        where: { organizationId, agentCode },
-    });
-    if (existingCode) {
-        throw new ConflictError(
-            `Agent code "${agentCode}" already exists.`
-        );
-    }
+    // Auto-generate agent code
+    const agentCount = await prisma.agent.count({ where: { organizationId } });
+    const agentCode = `AG-${String(agentCount + 1).padStart(3, '0')}`;
 
-    // Check RERA uniqueness — mandatory per regulation
-    const existingRera = await prisma.agent.findFirst({
-        where: { organizationId, reraNumber },
-    });
-    if (existingRera) {
-        throw new ConflictError(
-            `An agent with RERA number "${reraNumber}" already exists ` +
-            `(${existingRera.agentCode}).`
-        );
+    // Check RERA uniqueness if provided
+    if (reraNumber) {
+        const existingRera = await prisma.agent.findFirst({
+            where: { organizationId, reraNumber },
+        });
+        if (existingRera) {
+            throw new ConflictError(
+                `An agent with RERA number "${reraNumber}" already exists ` +
+                `(${existingRera.agentCode}).`
+            );
+        }
     }
 
     // Check mobile uniqueness

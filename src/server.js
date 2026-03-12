@@ -66,7 +66,13 @@ app.use(validateContentType);
 app.use(cors({
     origin: env.CORS_ORIGIN,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-organization-id'],
+    allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'x-organization-id',
+        'Cache-Control',
+        'Pragma',
+    ],
     credentials: true,
 }));
 
@@ -113,6 +119,11 @@ app.get('/health', async (req, res) => {
 });
 
 // ── API Routes ───────────────────────────────────────────────────────────────
+app.use('/v1', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+});
+
 app.use('/v1/auth', authRateLimiter, authRouter);
 app.use('/v1/projects', requireAuth, requireOrganization, orgRateLimiter, projectRouter);
 app.use('/v1/units', requireAuth, requireOrganization, orgRateLimiter, unitRouter);

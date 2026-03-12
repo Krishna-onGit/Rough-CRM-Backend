@@ -63,6 +63,24 @@ router.post(
     }
 );
 
+// PATCH /v1/bookings/:id/execute-agreement
+router.patch(
+    '/:id/execute-agreement',
+    requirePermission('bookings:update'),
+    async (req, res, next) => {
+        try {
+            const result = await bookingService.executeAgreement(
+                req.params.id,
+                req.body,
+                { organizationId: req.organizationId, userId: req.user.userId }
+            );
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
 // PATCH /v1/bookings/:id/register
 router.patch(
     '/:id/register',

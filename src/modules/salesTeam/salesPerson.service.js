@@ -157,17 +157,11 @@ export const createSalesPerson = async (
     userId,
     body
 ) => {
-    const { spCode, mobile, monthlyTarget, ...rest } = body;
+    const { mobile, monthlyTarget, ...rest } = body;
 
-    // Check SP code uniqueness
-    const existingCode = await prisma.salesPerson.findFirst({
-        where: { organizationId, spCode },
-    });
-    if (existingCode) {
-        throw new ConflictError(
-            `Sales person code "${spCode}" already exists.`
-        );
-    }
+    // Auto-generate SP code
+    const spCount = await prisma.salesPerson.count({ where: { organizationId } });
+    const spCode = `SP-${String(spCount + 1).padStart(3, '0')}`;
 
     // Check mobile uniqueness
     const existingMobile = await prisma.salesPerson.findFirst({
